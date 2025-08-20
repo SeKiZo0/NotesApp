@@ -1,0 +1,17 @@
+{
+  "name": "notes-app-frontend",
+  "version": "1.0.0",
+  "description": "Frontend for Notes Application",
+  "main": "index.html",
+  "scripts": {
+    "start": "npx http-server . -p 3000 -c-1",
+    "dev": "npx http-server . -p 3000 -c-1",
+    "build": "echo 'No build step required for static files'"
+  },
+  "devDependencies": {
+    "http-server": "^14.1.1"
+  },
+  "keywords": ["notes", "frontend", "javascript"],
+  "author": "",
+  "license": "MIT"
+}
