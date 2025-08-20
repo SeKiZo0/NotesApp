@@ -1,3 +1,73 @@
+// Helper function for Kubernetes deployment - MUST be outside pipeline block
+def deployToKubernetes(environment) {
+    withCredentials([kubeconfigFile(credentialsId: K8S_CREDENTIALS, variable: 'KUBECONFIG')]) {
+        def namespace = environment == 'production' ? 'notes-app-prod' : 'notes-app-staging'
+        
+        // Create namespace if it doesn't exist
+        sh "kubectl create namespace ${namespace} --dry-run=client -o yaml | kubectl apply -f -"
+        
+        // Deploy PostgreSQL (only if not exists)
+        sh """
+            if ! kubectl get deployment postgres-deployment -n ${namespace} > /dev/null 2>&1; then
+                echo "Deploying PostgreSQL to ${environment}..."
+                
+                # Apply PostgreSQL deployment with secrets
+                kubectl apply -f k8s/postgres-deployment.yaml -n ${namespace}
+                
+                # Wait for PostgreSQL to be ready
+                echo "Waiting for PostgreSQL to be available..."
+                kubectl wait --for=condition=available --timeout=300s deployment/postgres-deployment -n ${namespace}
+                
+                # Verify PostgreSQL is accepting connections
+                echo "Verifying PostgreSQL connectivity..."
+                kubectl exec deployment/postgres-deployment -n ${namespace} -- pg_isready -U postgres
+                
+                echo "PostgreSQL deployment completed successfully"
+            else
+                echo "PostgreSQL already deployed in ${environment}"
+                
+                # Still verify it's healthy
+                kubectl exec deployment/postgres-deployment -n ${namespace} -- pg_isready -U postgres
+            fi
+        """
+        
+        // Update image tags in deployments
+        sh """
+            # Create temporary deployment files with updated images
+            sed 's|notes-app-backend:latest|${env.BACKEND_IMAGE}|g' k8s/backend-deployment.yaml > backend-${environment}.yaml
+            sed 's|notes-app-frontend:latest|${env.FRONTEND_IMAGE}|g' k8s/frontend-deployment.yaml > frontend-${environment}.yaml
+            
+            # Apply backend deployment (this includes the PostgreSQL connection config)
+            echo "Deploying backend with PostgreSQL connection..."
+            kubectl apply -f backend-${environment}.yaml -n ${namespace}
+            
+            # Wait for backend to be ready (it will wait for PostgreSQL via init container)
+            echo "Waiting for backend deployment to complete..."
+            kubectl rollout status deployment/backend-deployment -n ${namespace} --timeout=300s
+            
+            # Verify backend can connect to PostgreSQL
+            echo "Verifying backend-PostgreSQL connectivity..."
+            sleep 15  # Give backend time to initialize
+            kubectl exec deployment/backend-deployment -n ${namespace} -- curl -f http://localhost:3000/health
+            
+            # Apply frontend deployment  
+            echo "Deploying frontend..."
+            kubectl apply -f frontend-${environment}.yaml -n ${namespace}
+            kubectl rollout status deployment/frontend-deployment -n ${namespace} --timeout=300s
+            
+            # Get service information
+            echo "=== Deployment completed for ${environment} ==="
+            echo "PostgreSQL Connection Details:"
+            echo "  Host: postgres-service.${namespace}.svc.cluster.local"
+            echo "  Port: 5432"
+            echo "  Database: notesdb"
+            echo "  User: postgres"
+            echo ""
+            kubectl get pods,svc,ingress -n ${namespace}
+        """
+    }
+}
+
 pipeline {
     agent any
     
@@ -193,7 +263,7 @@ pipeline {
                             
                             # Verify backend database connection
                             echo "Testing backend database connection..."
-                            kubectl exec deployment/backend-deployment -n ${namespace} -- curl -f http://localhost:5000/api/health/db
+                            kubectl exec deployment/backend-deployment -n ${namespace} -- curl -f http://localhost:3000/health
                             
                             # Show database connection details
                             echo "=== Database Connection Summary ==="
@@ -212,7 +282,7 @@ pipeline {
         stage('Run Health Checks') {
             steps {
                 script {
-                    def namespace = env.BRANCH_NAME == 'main' || env.BRANCH_NAME == 'master' ? 'production' : 'staging'
+                    def namespace = env.BRANCH_NAME == 'main' || env.BRANCH_NAME == 'master' ? 'notes-app-prod' : 'notes-app-staging'
                     echo "Running health checks in ${namespace} environment..."
                     
                     withCredentials([kubeconfigFile(credentialsId: K8S_CREDENTIALS, variable: 'KUBECONFIG')]) {
@@ -222,11 +292,7 @@ pipeline {
                             
                             # Check backend health
                             kubectl exec -n ${namespace} deployment/backend-deployment -- \
-                                curl -f http://localhost:5000/health || exit 1
-                            
-                            # Check database connectivity
-                            kubectl exec -n ${namespace} deployment/backend-deployment -- \
-                                curl -f http://localhost:5000/api/health/db || exit 1
+                                curl -f http://localhost:3000/health || exit 1
                             
                             # Check if frontend is serving content
                             kubectl exec -n ${namespace} deployment/frontend-deployment -- \
@@ -237,76 +303,6 @@ pipeline {
                     }
                 }
             }
-        }
-    }
-    
-    // Helper function for Kubernetes deployment
-    def deployToKubernetes(environment) {
-        withCredentials([kubeconfigFile(credentialsId: K8S_CREDENTIALS, variable: 'KUBECONFIG')]) {
-            def namespace = environment == 'production' ? 'notes-app-prod' : 'notes-app-staging'
-            
-            // Create namespace if it doesn't exist
-            sh "kubectl create namespace ${namespace} --dry-run=client -o yaml | kubectl apply -f -"
-            
-            // Deploy PostgreSQL (only if not exists)
-            sh """
-                if ! kubectl get deployment postgres-deployment -n ${namespace} > /dev/null 2>&1; then
-                    echo "Deploying PostgreSQL to ${environment}..."
-                    
-                    # Apply PostgreSQL deployment with secrets
-                    kubectl apply -f k8s/postgres-deployment.yaml -n ${namespace}
-                    
-                    # Wait for PostgreSQL to be ready
-                    echo "Waiting for PostgreSQL to be available..."
-                    kubectl wait --for=condition=available --timeout=300s deployment/postgres-deployment -n ${namespace}
-                    
-                    # Verify PostgreSQL is accepting connections
-                    echo "Verifying PostgreSQL connectivity..."
-                    kubectl exec deployment/postgres-deployment -n ${namespace} -- pg_isready -U postgres
-                    
-                    echo "PostgreSQL deployment completed successfully"
-                else
-                    echo "PostgreSQL already deployed in ${environment}"
-                    
-                    # Still verify it's healthy
-                    kubectl exec deployment/postgres-deployment -n ${namespace} -- pg_isready -U postgres
-                fi
-            """
-            
-            // Update image tags in deployments
-            sh """
-                # Create temporary deployment files with updated images
-                sed 's|notes-app-backend:latest|${env.BACKEND_IMAGE}|g' k8s/backend-deployment.yaml > backend-${environment}.yaml
-                sed 's|notes-app-frontend:latest|${env.FRONTEND_IMAGE}|g' k8s/frontend-deployment.yaml > frontend-${environment}.yaml
-                
-                # Apply backend deployment (this includes the PostgreSQL connection config)
-                echo "Deploying backend with PostgreSQL connection..."
-                kubectl apply -f backend-${environment}.yaml -n ${namespace}
-                
-                # Wait for backend to be ready (it will wait for PostgreSQL via init container)
-                echo "Waiting for backend deployment to complete..."
-                kubectl rollout status deployment/backend-deployment -n ${namespace} --timeout=300s
-                
-                # Verify backend can connect to PostgreSQL
-                echo "Verifying backend-PostgreSQL connectivity..."
-                sleep 15  # Give backend time to initialize
-                kubectl exec deployment/backend-deployment -n ${namespace} -- curl -f http://localhost:5000/api/health/db
-                
-                # Apply frontend deployment  
-                echo "Deploying frontend..."
-                kubectl apply -f frontend-${environment}.yaml -n ${namespace}
-                kubectl rollout status deployment/frontend-deployment -n ${namespace} --timeout=300s
-                
-                # Get service information
-                echo "=== Deployment completed for ${environment} ==="
-                echo "PostgreSQL Connection Details:"
-                echo "  Host: postgres-service.${namespace}.svc.cluster.local"
-                echo "  Port: 5432"
-                echo "  Database: notesdb"
-                echo "  User: postgres"
-                echo ""
-                kubectl get pods,svc,ingress -n ${namespace}
-            """
         }
     }
     
