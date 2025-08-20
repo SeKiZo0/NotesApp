@@ -1,0 +1,46 @@
+# Jenkins Credential Setup - Ready to Use
+
+## ✅ Your Base64 Encoded Kubeconfig
+
+Use this exact value for the Jenkins credential:
+
+```
+YXBpVmVyc2lvbjogdjENCmtpbmQ6IENvbmZpZw0KY2x1c3RlcnM6DQotIGNsdXN0ZXI6DQogICAgY2VydGlmaWNhdGUtYXV0aG9yaXR5LWRhdGE6IExTMHRMUzFDUlVkSlRpQkRSVkpVU1VaSlEwRlVSUzB0TFMwdENrMUpTVUprZWtORFFWSXlaMEYzU1VKQlowbENRVVJCUzBKblozRm9hMnBQVUZGUlJFRnFRV3BOVTBWM1NIZFpSRlpSVVVSRVFtaHlUVE5OZEdNeVZua0taRzFXZVV4WFRtaFJSRVV6VGxSVmQwMXFVWHBOUkd0M1NHaGpUazFxVlhkUFJFVjVUVlJuTUU1VVFUVlhhR05PVFhwVmQwOUVSWGROVkdjd1RsUkJOUXBYYWtGcVRWTkZkMGgzV1VSV1VWRkVSRUpvY2swelRYUmpNbFo1WkcxV2VVeFhUbWhSUkVVelRsUlZkMDFxVVhwTlJHdDNWMVJCVkVKblkzRm9hMnBQQ2xCUlNVSkNaMmR4YUd0cVQxQlJUVUpDZDA1RFFVRlVTa3QxU2xOVGExaEVkVkZrV1RWamQxcFpZWEJ0Tm5JelVVZEVWV3RDVlM5T1VIWndiMVZCWXpFK05VVlFXaXRqY25abmF6VkZUSHAwUlhVMmJtSXpZMUJITW5WdGFGTnliMUZHTUhSRFdERjNZekZsUml0dk1FbDNVVVJCVDBKblRsWklVVGhDUVdZNFJRcENRVTFEUVhGUmQwUjNXVVJXVWpCVVFWRklMMEpCVlhkQmQwVkNMM3BCWkVKblRsWklVVFJGUm1kUlZYWkphMEZDV2tkS2NqTXZjRWhJT0ZSaWQyRjZDakpaT0RCdmRVMTNRMmRaU1V0dldrbDZhakJGUVhkSlJGTkJRWGRTVVVsbldIaGtXRGRKWldORmRqWXJRVTVVVG05aVltdDNTVUZ1YVZsSGRHTm1aamNLZGtVemRsUlRTMjVzVG10RFNWRkVSWEE1ZEZOQ1dDc3JiRE14VFdWdFZEQlhVVzR3TWxkS1JHdDFiVlo0VGpKMGVIZFdUVkF2YVVWaWR6MDlDaTB0TFMwdFJVNUVJRU5GVWxKVVNVWkpRMEZVUlMwdExTMHRDZz09DQogICAgc2VydmVyOiBodHRwczovLzEyNy4wLjAuMTo2NDQzDQogIG5hbWU6IGRlZmF1bHQNCmNvbnRleHRzOg0KLSBjb250ZXh0Og0KICAgIGNsdXN0ZXI6IGRlZmF1bHQNCiAgICB1c2VyOiBqZW5raW5zLWRlcGxveWVyDQogIG5hbWU6IGplbmtpbnMtY29udGV4dA0KY3VycmVudC1jb250ZXh0OiBqZW5raW5zLWNvbnRleHQNCnVzZXJzOg0KLSBuYW1lOiBqZW5raW5zLWRlcGxveWVyDQogIHVzZXI6DQogICAgdG9rZW46IGV5SmhiR2NpT2lKU1V6STFOaUlzSW10cFpDSTZJbEpHUmxsUmNEWlhaMmhEWVVWemNFeEZaa1pFZVY4NGJHVktWVk5vYjBzelgzWjBXaTFrU2psTFlVVWlmUS5leUpoZFdRaU9sc2lhSFIwY0hNNkx5OXJkV0psY201bGRHVnpMbVJsWm1GMWJIUXVjM1pqTG1Oc2RYTjBaWEl1Ykc5allXd2lMQ0pyTTNNaVhTd2laWGh3SWpveFRuZzNNalV3TmpFNExDSnBZWFFpT2pFM05UVTNNVFEyTVRnc0ltbHpjeUk2SW1oMGRIQnpPaTh2YTNWaVpYSnVaWFJsY3k1a1pXWmhkV3gwTG5OMll5NWpiSFZ6ZEdWeUxtMXZZMkZzSWl3aWFuUnBJam9pTjJNek5UVTROVE01TFdSbU5URXRORGhpT0MxaVl6UXhMVEkwTXpZMU4yUTRaamMxT1NJc0ltdDFZbVZ5Ym1WMFpYTXVhVzhpT25zaWJtRnRaWE53WVdObElqb2laR1ZtWVhWc2RDSXNJbk5sY25acFkyVmhZMk52ZFc1MElqcDdJbTVoYldVaU9pSnFaVzVyYVc1ekxXUmxjR3h2ZVdWeUlpd2lkV2xrSWpvaU5qRmpZbVkxWkRZdFlUYzVPQzAwTVdReUxXSmhZbUl0WWpnME0yVm1NbVZsTVdNeUluMTlMQ0p1WW1ZaU9qRTNOVFUzTVRRMk1UZ3NJbk4xWWlJNkluTjVjM1JsYlRwelpYSjJhV05sWVdOamIzVnVkRHBrWldaaGRXeDBPbXBsYm10cGJuTXRaR1Z3Ykc5NVpYSWlmUS5mYzFWOE9FSi00X1FPWkhhRml5dmd6Sm5HQkJWdUpPRzZ2V3JkTm9FVzE5aWtwa1BYcVVyekFQTnhpazFDYjYyUkRWcFdZYVlUd18tZVFhYmJ4QU9sZUczLWxwektVNkNIazVZQTZBMnNhaDlybVRqU0c3VFM4Y0otSWIzNmk4eko4a3NBMGxzRktlaTE5WGxmRGFtc3oyQU5PaDQtYlpyUEpxZXFJMWZVZ0hBOEZTZGFvMlJ6ZEZ0RGVpUUVGcHh2T1E0VlUwandxYjBlS3J3cGdCMlZiLUVSWXhLck44Y0Y5ZS1hQjJOYzdmQnpEcmdvREgyS0FUSFgxelUtam1LbXJlRVRxbm1vQmc1Q19VUmZwdVpqN2VId2FWWUxPR0NySnY4NC1rMG8tak92Z3V1WUtmUTl0TkM0RTl3OWxzcXA5UGx1d0VRQVN0OW5yZFJFb3dvSHc=
+```
+
+## 🚀 Quick Setup Steps
+
+### 1. Create Jenkins Credential
+
+1. Go to **Jenkins** → **Manage Jenkins** → **Manage Credentials**
+2. Click **Global** → **Add Credentials**
+3. Select **Secret text**
+4. Fill in:
+   - **Secret**: Copy and paste the base64 string above
+   - **ID**: `kubernetes-config` 
+   - **Description**: `Kubernetes cluster configuration for jenkins-deployer`
+5. Click **OK**
+
+### 2. Verify Other Required Credentials
+
+Make sure you also have these credentials configured:
+
+#### `forgejo-git-credentials`
+- **Type**: Username with password
+- **ID**: `forgejo-git-credentials`  
+- **Username**: Your Forgejo username
+- **Password**: Your Forgejo password/token
+
+#### `docker-registry-credentials` 
+- **Type**: Username with password
+- **ID**: `docker-registry-credentials`
+- **Username**: Your Docker registry username  
+- **Password**: Your Docker registry password
+
+### 3. Trigger New Jenkins Build
+
+The pipeline should now:
+- ✅ Complete kubeconfig setup successfully
+- ✅ Connect to your K3s cluster
+- ✅ Execute database verification and health checks
+- ✅ Deploy to staging environment

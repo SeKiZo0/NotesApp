@@ -3,11 +3,34 @@ def deployToKubernetes(environment) {
     withCredentials([string(credentialsId: K8S_CREDENTIALS, variable: 'KUBECONFIG_CONTENT')]) {
         def namespace = environment == 'production' ? 'notes-app-prod' : 'notes-app-staging'
         
-        // Setup kubeconfig
+        // Setup kubeconfig with validation
         sh """
+            echo "Setting up kubeconfig for deployment to ${environment}..."
             mkdir -p ~/.kube
-            echo "\$KUBECONFIG_CONTENT" | base64 -d > ~/.kube/config
+            
+            # Validate kubeconfig content exists
+            if [ -z "\$KUBECONFIG_CONTENT" ]; then
+                echo "ERROR: KUBECONFIG_CONTENT is empty. Please check kubernetes-config credential."
+                exit 1
+            fi
+            
+            # Decode and validate base64 content
+            echo "Decoding kubeconfig content..."
+            if ! echo "\$KUBECONFIG_CONTENT" | base64 -d > ~/.kube/config 2>/dev/null; then
+                echo "ERROR: Failed to decode kubeconfig. Please ensure the credential contains valid base64 content."
+                echo "To create valid content: cat ~/.kube/config | base64 -w 0"
+                exit 1
+            fi
+            
             chmod 600 ~/.kube/config
+            
+            # Validate kubeconfig format
+            if ! kubectl config view --minify >/dev/null 2>&1; then
+                echo "ERROR: Invalid kubeconfig format after decoding."
+                exit 1
+            fi
+            
+            echo "Kubeconfig setup completed successfully"
         """
         
         // Create namespace if it doesn't exist
@@ -259,11 +282,34 @@ pipeline {
                     echo "Verifying database setup in ${environment}..."
                     
                     withCredentials([string(credentialsId: K8S_CREDENTIALS, variable: 'KUBECONFIG_CONTENT')]) {
-                        // Setup kubeconfig
+                        // Setup kubeconfig with validation
                         sh """
+                            echo "Setting up kubeconfig for database verification..."
                             mkdir -p ~/.kube
-                            echo "\$KUBECONFIG_CONTENT" | base64 -d > ~/.kube/config
+                            
+                            # Validate kubeconfig content exists
+                            if [ -z "\$KUBECONFIG_CONTENT" ]; then
+                                echo "ERROR: KUBECONFIG_CONTENT is empty. Please check kubernetes-config credential."
+                                exit 1
+                            fi
+                            
+                            # Decode and validate base64 content
+                            echo "Decoding kubeconfig content..."
+                            if ! echo "\$KUBECONFIG_CONTENT" | base64 -d > ~/.kube/config 2>/dev/null; then
+                                echo "ERROR: Failed to decode kubeconfig. Please ensure the credential contains valid base64 content."
+                                echo "To create valid content: cat ~/.kube/config | base64 -w 0"
+                                exit 1
+                            fi
+                            
                             chmod 600 ~/.kube/config
+                            
+                            # Validate kubeconfig format
+                            if ! kubectl config view --minify >/dev/null 2>&1; then
+                                echo "ERROR: Invalid kubeconfig format after decoding."
+                                exit 1
+                            fi
+                            
+                            echo "Kubeconfig setup completed successfully"
                         """
                         sh """
                             # Verify PostgreSQL is running and ready
@@ -299,11 +345,34 @@ pipeline {
                     echo "Running health checks in ${namespace} environment..."
                     
                     withCredentials([string(credentialsId: K8S_CREDENTIALS, variable: 'KUBECONFIG_CONTENT')]) {
-                        // Setup kubeconfig
+                        // Setup kubeconfig with validation
                         sh """
+                            echo "Setting up kubeconfig for health checks..."
                             mkdir -p ~/.kube
-                            echo "\$KUBECONFIG_CONTENT" | base64 -d > ~/.kube/config
+                            
+                            # Validate kubeconfig content exists
+                            if [ -z "\$KUBECONFIG_CONTENT" ]; then
+                                echo "ERROR: KUBECONFIG_CONTENT is empty. Please check kubernetes-config credential."
+                                exit 1
+                            fi
+                            
+                            # Decode and validate base64 content
+                            echo "Decoding kubeconfig content..."
+                            if ! echo "\$KUBECONFIG_CONTENT" | base64 -d > ~/.kube/config 2>/dev/null; then
+                                echo "ERROR: Failed to decode kubeconfig. Please ensure the credential contains valid base64 content."
+                                echo "To create valid content: cat ~/.kube/config | base64 -w 0"
+                                exit 1
+                            fi
+                            
                             chmod 600 ~/.kube/config
+                            
+                            # Validate kubeconfig format
+                            if ! kubectl config view --minify >/dev/null 2>&1; then
+                                echo "ERROR: Invalid kubeconfig format after decoding."
+                                exit 1
+                            fi
+                            
+                            echo "Kubeconfig setup completed successfully"
                         """
                         sh """
                             # Wait a bit for services to be ready
