@@ -48,7 +48,7 @@ def deployToKubernetes(environment) {
             # Verify backend can connect to PostgreSQL
             echo "Verifying backend-PostgreSQL connectivity..."
             sleep 15  # Give backend time to initialize
-            kubectl exec deployment/backend-deployment -n ${namespace} -- curl -f http://localhost:3000/health
+            kubectl exec deployment/backend-deployment -n ${namespace} -- curl -f http://localhost:5000/health
             
             # Apply frontend deployment  
             echo "Deploying frontend..."
@@ -126,37 +126,35 @@ pipeline {
         }
         
         stage('Build Docker Images') {
-    parallel {
-        stage('Build Frontend Image') {
-            steps {
-                script {
-                    echo "Building frontend image: ${DOCKER_REPO_FRONTEND}:${BUILD_TAG}"
-                    def frontendImage = docker.build(
-                        "${DOCKER_REPO_FRONTEND}:${BUILD_TAG}",
-                        "-f Dockerfile.frontend ."
-                    )
-                    // The .tag() method is already correct and working.
-                    frontendImage.tag("${DOCKER_REPO_FRONTEND}:latest")
-                    env.FRONTEND_IMAGE = "${DOCKER_REPO_FRONTEND}:${BUILD_TAG}"
+            parallel {
+                stage('Build Frontend Image') {
+                    steps {
+                        script {
+                            echo "Building frontend image: ${DOCKER_REPO_FRONTEND}:${BUILD_TAG}"
+                            def frontendImage = docker.build(
+                                "${DOCKER_REPO_FRONTEND}:${BUILD_TAG}",
+                                "-f Dockerfile.frontend ."
+                            )
+                            frontendImage.tag("latest")
+                            env.FRONTEND_IMAGE = "${DOCKER_REPO_FRONTEND}:${BUILD_TAG}"
+                        }
+                    }
+                }
+                stage('Build Backend Image') {
+                    steps {
+                        script {
+                            echo "Building backend image: ${DOCKER_REPO_BACKEND}:${BUILD_TAG}"
+                            def backendImage = docker.build(
+                                "${DOCKER_REPO_BACKEND}:${BUILD_TAG}",
+                                "-f Dockerfile.backend ."
+                            )
+                            backendImage.tag("latest")
+                            env.BACKEND_IMAGE = "${DOCKER_REPO_BACKEND}:${BUILD_TAG}"
+                        }
+                    }
                 }
             }
         }
-        stage('Build Backend Image') {
-            steps {
-                script {
-                    echo "Building backend image: ${DOCKER_REPO_BACKEND}:${BUILD_TAG}"
-                    def backendImage = docker.build(
-                        "${DOCKER_REPO_BACKEND}:${BUILD_TAG}",
-                        "-f Dockerfile.backend ."
-                    )
-                    // The .tag() method is already correct and working.
-                    backendImage.tag("${DOCKER_REPO_BACKEND}:latest")
-                    env.BACKEND_IMAGE = "${DOCKER_REPO_BACKEND}:${BUILD_TAG}"
-                }
-            }
-        }
-    }
-}
         
         stage('Security Scan') {
             parallel {
@@ -265,7 +263,7 @@ pipeline {
                             
                             # Verify backend database connection
                             echo "Testing backend database connection..."
-                            kubectl exec deployment/backend-deployment -n ${namespace} -- curl -f http://localhost:3000/health
+                            kubectl exec deployment/backend-deployment -n ${namespace} -- curl -f http://localhost:5000/health
                             
                             # Show database connection details
                             echo "=== Database Connection Summary ==="
@@ -294,7 +292,7 @@ pipeline {
                             
                             # Check backend health
                             kubectl exec -n ${namespace} deployment/backend-deployment -- \
-                                curl -f http://localhost:3000/health || exit 1
+                                curl -f http://localhost:5000/health || exit 1
                             
                             # Check if frontend is serving content
                             kubectl exec -n ${namespace} deployment/frontend-deployment -- \
