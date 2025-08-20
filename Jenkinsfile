@@ -1,7 +1,14 @@
 // Helper function for Kubernetes deployment - MUST be outside pipeline block
 def deployToKubernetes(environment) {
-    withCredentials([kubeconfigFile(credentialsId: K8S_CREDENTIALS, variable: 'KUBECONFIG')]) {
+    withCredentials([string(credentialsId: K8S_CREDENTIALS, variable: 'KUBECONFIG_CONTENT')]) {
         def namespace = environment == 'production' ? 'notes-app-prod' : 'notes-app-staging'
+        
+        // Setup kubeconfig
+        sh """
+            mkdir -p ~/.kube
+            echo "\$KUBECONFIG_CONTENT" | base64 -d > ~/.kube/config
+            chmod 600 ~/.kube/config
+        """
         
         // Create namespace if it doesn't exist
         sh "kubectl create namespace ${namespace} --dry-run=client -o yaml | kubectl apply -f -"
@@ -251,7 +258,13 @@ pipeline {
                     
                     echo "Verifying database setup in ${environment}..."
                     
-                    withCredentials([kubeconfigFile(credentialsId: K8S_CREDENTIALS, variable: 'KUBECONFIG')]) {
+                    withCredentials([string(credentialsId: K8S_CREDENTIALS, variable: 'KUBECONFIG_CONTENT')]) {
+                        // Setup kubeconfig
+                        sh """
+                            mkdir -p ~/.kube
+                            echo "\$KUBECONFIG_CONTENT" | base64 -d > ~/.kube/config
+                            chmod 600 ~/.kube/config
+                        """
                         sh """
                             # Verify PostgreSQL is running and ready
                             echo "Checking PostgreSQL status..."
@@ -285,7 +298,13 @@ pipeline {
                     def namespace = env.BRANCH_NAME == 'main' || env.BRANCH_NAME == 'master' ? 'notes-app-prod' : 'notes-app-staging'
                     echo "Running health checks in ${namespace} environment..."
                     
-                    withCredentials([kubeconfigFile(credentialsId: K8S_CREDENTIALS, variable: 'KUBECONFIG')]) {
+                    withCredentials([string(credentialsId: K8S_CREDENTIALS, variable: 'KUBECONFIG_CONTENT')]) {
+                        // Setup kubeconfig
+                        sh """
+                            mkdir -p ~/.kube
+                            echo "\$KUBECONFIG_CONTENT" | base64 -d > ~/.kube/config
+                            chmod 600 ~/.kube/config
+                        """
                         sh """
                             # Wait a bit for services to be ready
                             sleep 30
