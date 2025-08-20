@@ -126,35 +126,37 @@ pipeline {
         }
         
         stage('Build Docker Images') {
-            parallel {
-                stage('Build Frontend Image') {
-                    steps {
-                        script {
-                            echo "Building frontend image: ${DOCKER_REPO_FRONTEND}:${BUILD_TAG}"
-                            def frontendImage = docker.build(
-                                "${DOCKER_REPO_FRONTEND}:${BUILD_TAG}",
-                                "-f Dockerfile.frontend ."
-                            )
-                            frontendImage.tag("${DOCKER_REPO_FRONTEND}:latest")
-                            env.FRONTEND_IMAGE = "${DOCKER_REPO_FRONTEND}:${BUILD_TAG}"
-                        }
-                    }
-                }
-                stage('Build Backend Image') {
-                    steps {
-                        script {
-                            echo "Building backend image: ${DOCKER_REPO_BACKEND}:${BUILD_TAG}"
-                            def backendImage = docker.build(
-                                "${DOCKER_REPO_BACKEND}:${BUILD_TAG}",
-                                "-f Dockerfile.backend ."
-                            )
-                            backendImage.tag("${DOCKER_REPO_BACKEND}:latest")
-                            env.BACKEND_IMAGE = "${DOCKER_REPO_BACKEND}:${BUILD_TAG}"
-                        }
-                    }
+    parallel {
+        stage('Build Frontend Image') {
+            steps {
+                script {
+                    echo "Building frontend image: ${DOCKER_REPO_FRONTEND}:${BUILD_TAG}"
+                    def frontendImage = docker.build(
+                        "${DOCKER_REPO_FRONTEND}:${BUILD_TAG}",
+                        "-f Dockerfile.frontend ."
+                    )
+                    // The .tag() method is already correct and working.
+                    frontendImage.tag("${DOCKER_REPO_FRONTEND}:latest")
+                    env.FRONTEND_IMAGE = "${DOCKER_REPO_FRONTEND}:${BUILD_TAG}"
                 }
             }
         }
+        stage('Build Backend Image') {
+            steps {
+                script {
+                    echo "Building backend image: ${DOCKER_REPO_BACKEND}:${BUILD_TAG}"
+                    def backendImage = docker.build(
+                        "${DOCKER_REPO_BACKEND}:${BUILD_TAG}",
+                        "-f Dockerfile.backend ."
+                    )
+                    // The .tag() method is already correct and working.
+                    backendImage.tag("${DOCKER_REPO_BACKEND}:latest")
+                    env.BACKEND_IMAGE = "${DOCKER_REPO_BACKEND}:${BUILD_TAG}"
+                }
+            }
+        }
+    }
+}
         
         stage('Security Scan') {
             parallel {
