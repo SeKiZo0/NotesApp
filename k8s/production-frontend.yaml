@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: frontend
-        image: 192.168.1.150:3000/Morris/notes-app-frontend:latest
+        image: 192.168.1.150:3000/morris/notes-app-frontend:latest
         ports:
         - containerPort: 80
         resources:

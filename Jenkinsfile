@@ -58,8 +58,8 @@ pipeline {
     environment {
         // Docker Registry Configuration
         DOCKER_REGISTRY = '192.168.1.150:3000'
-        DOCKER_REPO_FRONTEND = "${DOCKER_REGISTRY}/Morris/notes-app-frontend"
-        DOCKER_REPO_BACKEND = "${DOCKER_REGISTRY}/Morris/notes-app-backend"
+        DOCKER_REPO_FRONTEND = "${DOCKER_REGISTRY}/morris/notes-app-frontend"
+        DOCKER_REPO_BACKEND = "${DOCKER_REGISTRY}/morris/notes-app-backend"
         
         // Credentials
         REGISTRY_CREDENTIALS = 'forgejo-registry-credentials'

@@ -41,7 +41,7 @@ spec:
     spec:
       containers:
       - name: backend
-        image: 192.168.1.150:3000/Morris/notes-app-backend:latest
+        image: 192.168.1.150:3000/morris/notes-app-backend:latest
         ports:
         - containerPort: 5000
         envFrom:
