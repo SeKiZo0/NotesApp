@@ -160,26 +160,47 @@ pipeline {
                         echo "Pushing images to registry..."
                         echo "Registry: ${DOCKER_REGISTRY}"
                         
-                        # Try to push with curl-based approach if direct push fails
-                        set +e  # Don't exit on error
+                        # Create temporary Docker config to handle insecure registry
+                        mkdir -p /tmp/docker-config
                         
-                        # Try direct push first
-                        docker push ${DOCKER_REPO_FRONTEND}:${BUILD_TAG}
-                        FRONTEND_PUSH_EXIT=\$?
+                        # Try to configure client-side settings
+                        cat > /tmp/docker-config/config.json << 'EOF'
+{
+  "auths": {},
+  "experimental": "disabled"
+}
+EOF
                         
-                        if [ \$FRONTEND_PUSH_EXIT -ne 0 ]; then
-                            echo "Direct push failed, this might be due to HTTPS/HTTP mismatch"
-                            echo "Please configure Jenkins Docker daemon with insecure-registries"
-                            echo "Add this to /etc/docker/daemon.json on Jenkins server:"
-                            echo '{"insecure-registries": ["${DOCKER_REGISTRY}"]}'
+                        # Set environment variables for this session
+                        export DOCKER_CONFIG=/tmp/docker-config
+                        export DOCKER_TLS_VERIFY=""
+                        export DOCKER_CERT_PATH=""
+                        
+                        # Try pushing with different approaches
+                        echo "Attempting to push images..."
+                        
+                        # Method 1: Direct push
+                        if docker push ${DOCKER_REPO_FRONTEND}:${BUILD_TAG} 2>/dev/null; then
+                            echo "✅ Frontend image pushed successfully"
+                            docker push ${DOCKER_REPO_FRONTEND}:latest
+                            docker push ${DOCKER_REPO_BACKEND}:${BUILD_TAG}
+                            docker push ${DOCKER_REPO_BACKEND}:latest
+                            echo "✅ All images pushed successfully"
+                        else
+                            echo "❌ Push failed - Docker daemon needs configuration"
+                            echo ""
+                            echo "🔧 SOLUTION: Configure Docker daemon on Jenkins server"
+                            echo "1. SSH to Jenkins server: ssh [user]@192.168.1.153"
+                            echo "2. Edit daemon config: sudo nano /etc/docker/daemon.json"
+                            echo "3. Add this content:"
+                            echo '   {"insecure-registries": ["192.168.1.150:3000"]}'
+                            echo "4. Restart Docker: sudo systemctl restart docker"
+                            echo "5. Restart Jenkins: sudo systemctl restart jenkins"
+                            echo ""
+                            echo "📝 Alternative: If you cannot access Jenkins server,"
+                            echo "   set up Docker registry with HTTPS/TLS instead"
                             exit 1
                         fi
-                        
-                        docker push ${DOCKER_REPO_FRONTEND}:latest  
-                        docker push ${DOCKER_REPO_BACKEND}:${BUILD_TAG}
-                        docker push ${DOCKER_REPO_BACKEND}:latest
-                        
-                        echo "All images pushed successfully!"
                     """
                 }
             }
