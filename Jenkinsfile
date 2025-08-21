@@ -1,18 +1,15 @@
 // Helper function for Kubernetes deployment - MUST be outside pipeline block
 def deployToKubernetes(environment) {
-    withCredentials([string(credentialsId: K8S_CREDENTIALS, variable: 'KUBECONFIG_CONTENT')]) {
-        // Write kubeconfig content to temporary file
-        writeFile file: '.kubeconfig', text: env.KUBECONFIG_CONTENT
-        env.KUBECONFIG = "${env.WORKSPACE}/.kubeconfig"
-        def namespace = environment == 'production' ? 'notes-app-prod' : 'notes-app-staging'
-        
-        // Create namespace if it doesn't exist - using Docker-based kubectl
-        sh """
-            docker run --rm -v ${env.WORKSPACE}/.kubeconfig:/root/.kube/config bitnami/kubectl:latest \
-                create namespace ${namespace} --dry-run=client -o yaml | \
-            docker run --rm -i -v ${env.WORKSPACE}/.kubeconfig:/root/.kube/config bitnami/kubectl:latest \
-                apply -f - --validate=false
-        """
+    // Use kubeconfig file from repository
+    def namespace = environment == 'production' ? 'notes-app-prod' : 'notes-app-staging'
+    
+    // Create namespace if it doesn't exist - using Docker-based kubectl
+    sh """
+        docker run --rm -v ${env.WORKSPACE}/k8s/kubeconfig.yaml:/root/.kube/config bitnami/kubectl:latest \
+            create namespace ${namespace} --dry-run=client -o yaml | \
+        docker run --rm -i -v ${env.WORKSPACE}/k8s/kubeconfig.yaml:/root/.kube/config bitnami/kubectl:latest \
+            apply -f - --validate=false
+    """
         
         // Note: PostgreSQL is external - no deployment needed
         echo "Using external PostgreSQL server - no database deployment required"
@@ -25,19 +22,19 @@ def deployToKubernetes(environment) {
             
             # Apply backend deployment (with external PostgreSQL connection)
             echo "Deploying backend with external PostgreSQL connection..."
-            docker run --rm -v ${env.WORKSPACE}/.kubeconfig:/root/.kube/config -v ${env.WORKSPACE}:/workspace \
+            docker run --rm -v ${env.WORKSPACE}/k8s/kubeconfig.yaml:/root/.kube/config -v ${env.WORKSPACE}:/workspace \
                 bitnami/kubectl:latest apply -f /workspace/backend-${environment}.yaml -n ${namespace} --validate=false
             
             # Wait for backend to be ready
             echo "Waiting for backend deployment to complete..."
-            docker run --rm -v ${env.WORKSPACE}/.kubeconfig:/root/.kube/config \
+            docker run --rm -v ${env.WORKSPACE}/k8s/kubeconfig.yaml:/root/.kube/config \
                 bitnami/kubectl:latest rollout status deployment/backend-deployment -n ${namespace} --timeout=300s
             
             # Apply frontend deployment  
             echo "Deploying frontend..."
-            docker run --rm -v ${env.WORKSPACE}/.kubeconfig:/root/.kube/config -v ${env.WORKSPACE}:/workspace \
+            docker run --rm -v ${env.WORKSPACE}/k8s/kubeconfig.yaml:/root/.kube/config -v ${env.WORKSPACE}:/workspace \
                 bitnami/kubectl:latest apply -f /workspace/frontend-${environment}.yaml -n ${namespace} --validate=false
-            docker run --rm -v ${env.WORKSPACE}/.kubeconfig:/root/.kube/config \
+            docker run --rm -v ${env.WORKSPACE}/k8s/kubeconfig.yaml:/root/.kube/config \
                 bitnami/kubectl:latest rollout status deployment/frontend-deployment -n ${namespace} --timeout=300s
             
             # Get service information
@@ -46,7 +43,7 @@ def deployToKubernetes(environment) {
             echo "Database: ${POSTGRES_DB}"
             echo "User: ${POSTGRES_USER}"
             echo ""
-            docker run --rm -v ${env.WORKSPACE}/.kubeconfig:/root/.kube/config \
+            docker run --rm -v ${env.WORKSPACE}/k8s/kubeconfig.yaml:/root/.kube/config \
                 bitnami/kubectl:latest get pods,svc,ingress -n ${namespace}
         """
     }
