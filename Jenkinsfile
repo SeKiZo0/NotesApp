@@ -1,6 +1,9 @@
 // Helper function for Kubernetes deployment - MUST be outside pipeline block
 def deployToKubernetes(environment) {
-    withCredentials([kubeconfigFile(credentialsId: K8S_CREDENTIALS, variable: 'KUBECONFIG')]) {
+    withCredentials([string(credentialsId: K8S_CREDENTIALS, variable: 'KUBECONFIG_CONTENT')]) {
+        // Write kubeconfig content to temporary file
+        writeFile file: '.kubeconfig', text: env.KUBECONFIG_CONTENT
+        env.KUBECONFIG = "${env.WORKSPACE}/.kubeconfig"
         def namespace = environment == 'production' ? 'notes-app-prod' : 'notes-app-staging'
         
         // Create namespace if it doesn't exist
@@ -322,7 +325,11 @@ pipeline {
                     
                     echo "Verifying database setup in ${environment}..."
                     
-                    withCredentials([kubeconfigFile(credentialsId: K8S_CREDENTIALS, variable: 'KUBECONFIG')]) {
+                    withCredentials([string(credentialsId: K8S_CREDENTIALS, variable: 'KUBECONFIG_CONTENT')]) {
+                        // Write kubeconfig content to temporary file
+                        writeFile file: '.kubeconfig', text: env.KUBECONFIG_CONTENT
+                        env.KUBECONFIG = "${env.WORKSPACE}/.kubeconfig"
+                        
                         sh """
                             # Verify PostgreSQL is running and ready
                             echo "Checking PostgreSQL status..."
@@ -356,7 +363,11 @@ pipeline {
                     def namespace = env.BRANCH_NAME == 'main' || env.BRANCH_NAME == 'master' ? 'notes-app-prod' : 'notes-app-staging'
                     echo "Running health checks in ${namespace} environment..."
                     
-                    withCredentials([kubeconfigFile(credentialsId: K8S_CREDENTIALS, variable: 'KUBECONFIG')]) {
+                    withCredentials([string(credentialsId: K8S_CREDENTIALS, variable: 'KUBECONFIG_CONTENT')]) {
+                        // Write kubeconfig content to temporary file
+                        writeFile file: '.kubeconfig', text: env.KUBECONFIG_CONTENT
+                        env.KUBECONFIG = "${env.WORKSPACE}/.kubeconfig"
+                        
                         sh """
                             # Wait a bit for services to be ready
                             sleep 30
