@@ -22,79 +22,73 @@ def deployToKubernetes(environment) {
         
         // Note: PostgreSQL is external - no deployment needed
         echo "Using external PostgreSQL server - no database deployment required"
-        
-        // Update image tags in deployments and deploy apps
+
+        // Replace image placeholders, create imagePullSecret, deploy & wait
         sh """
-            # Read kubeconfig content as base64 to pass via environment variable
+            set -e
             KUBECONFIG_CONTENT=\$(cat ${env.WORKSPACE}/k8s/kubeconfig.yaml | base64 -w 0)
-            
-            # Create temporary deployment files with latest tags (fallback for insecure registry)
-            sed 's|192.168.1.150:3000/morris/notes-app-backend:latest|192.168.1.150:3000/morris/notes-app-backend:latest|g' k8s/production-backend.yaml > backend-${environment}.yaml
-            sed 's|192.168.1.150:3000/morris/notes-app-frontend:latest|192.168.1.150:3000/morris/notes-app-frontend:latest|g' k8s/production-frontend.yaml > frontend-${environment}.yaml
-            
-            echo "Using latest tags to avoid registry SSL issues:"
-            echo "Backend: 192.168.1.150:3000/morris/notes-app-backend:latest"
-            echo "Frontend: 192.168.1.150:3000/morris/notes-app-frontend:latest"
-            
-            echo "Checking if images exist in registry..."
-            curl -s http://192.168.1.150:3000/v2/morris/notes-app-backend/tags/list || echo "Failed to check backend tags"
-            curl -s http://192.168.1.150:3000/v2/morris/notes-app-frontend/tags/list || echo "Failed to check frontend tags"
-            
-            # Apply backend deployment (with external PostgreSQL connection)
-            echo "Deploying backend with external PostgreSQL connection..."
-            docker run --rm -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" -v ${env.WORKSPACE}:/workspace alpine/k8s:1.28.0 sh -c '
-                echo \$KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
+
+            BACKEND_IMAGE='${env.BACKEND_IMAGE}'
+            FRONTEND_IMAGE='${env.FRONTEND_IMAGE}'
+
+            echo "Preparing deployment manifests with build tag images"
+            sed "s|192.168.1.150:3000/morris/notes-app-backend:__IMAGE_TAG__|$BACKEND_IMAGE|g" k8s/production-backend.yaml > backend-${environment}.yaml
+            sed "s|192.168.1.150:3000/morris/notes-app-frontend:__IMAGE_TAG__|$FRONTEND_IMAGE|g" k8s/production-frontend.yaml > frontend-${environment}.yaml
+
+            echo "Creating/Updating registry imagePullSecret (docker-registry-secret) in ${namespace}"
+            docker run --rm -e KUBECONFIG_CONTENT=\"$KUBECONFIG_CONTENT\" alpine/k8s:1.28.0 sh -c '
+              echo $KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
+              export KUBECONFIG=/tmp/kubeconfig
+              kubectl create secret docker-registry docker-registry-secret \
+                --docker-server=${DOCKER_REGISTRY} \
+                --docker-username=${DOCKER_USER} \
+                --docker-password=${DOCKER_PASS} \
+                -n ${namespace} --dry-run=client -o yaml | kubectl apply -f -
+            '
+
+            echo "Deploying backend..."
+            docker run --rm -e KUBECONFIG_CONTENT=\"$KUBECONFIG_CONTENT\" -v ${env.WORKSPACE}:/workspace alpine/k8s:1.28.0 sh -c '
+                echo $KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
                 export KUBECONFIG=/tmp/kubeconfig
                 kubectl apply -f /workspace/backend-${environment}.yaml -n ${namespace} --validate=false
             '
-            
-            # Wait for backend to be ready
-            echo "Waiting for backend deployment to complete..."
-            if ! docker run --rm -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" alpine/k8s:1.28.0 sh -c '
-                echo \$KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
+
+            echo "Waiting for backend rollout..."
+            if ! docker run --rm -e KUBECONFIG_CONTENT=\"$KUBECONFIG_CONTENT\" alpine/k8s:1.28.0 sh -c '
+                echo $KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
                 export KUBECONFIG=/tmp/kubeconfig
                 kubectl rollout status deployment/backend-deployment -n ${namespace} --timeout=300s
             '; then
-                echo "Backend deployment failed, checking pod status..."
-                docker run --rm -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" alpine/k8s:1.28.0 sh -c '
-                    echo \$KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
+                echo "Backend deployment failed, gathering diagnostics"
+                docker run --rm -e KUBECONFIG_CONTENT=\"$KUBECONFIG_CONTENT\" alpine/k8s:1.28.0 sh -c '
+                    echo $KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
                     export KUBECONFIG=/tmp/kubeconfig
-                    echo "=== Pod Status ==="
-                    kubectl get pods -n ${namespace} -l app=backend
-                    echo "=== Pod Events ==="
-                    kubectl get events -n ${namespace} --sort-by=.metadata.creationTimestamp
-                    echo "=== Pod Logs ==="
-                    kubectl logs -n ${namespace} -l app=backend --tail=50 || echo "No logs available"
+                    echo "=== Backend Pod Status ==="; kubectl get pods -n ${namespace} -l app=backend
+                    echo "=== Events ==="; kubectl get events -n ${namespace} --sort-by=.metadata.creationTimestamp | tail -n 50
+                    echo "=== Logs (first available pod) ==="; POD=\$(kubectl get pods -n ${namespace} -l app=backend -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true); [ -n "$POD" ] && kubectl logs -n ${namespace} $POD --tail=100 || echo "No logs"
                 '
                 exit 1
             fi
-            
-            # Apply frontend deployment  
+
             echo "Deploying frontend..."
-            docker run --rm -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" -v ${env.WORKSPACE}:/workspace alpine/k8s:1.28.0 sh -c '
-                echo \$KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
+            docker run --rm -e KUBECONFIG_CONTENT=\"$KUBECONFIG_CONTENT\" -v ${env.WORKSPACE}:/workspace alpine/k8s:1.28.0 sh -c '
+                echo $KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
                 export KUBECONFIG=/tmp/kubeconfig
                 kubectl apply -f /workspace/frontend-${environment}.yaml -n ${namespace} --validate=false
             '
-            docker run --rm -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" alpine/k8s:1.28.0 sh -c '
-                echo \$KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
+            docker run --rm -e KUBECONFIG_CONTENT=\"$KUBECONFIG_CONTENT\" alpine/k8s:1.28.0 sh -c '
+                echo $KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
                 export KUBECONFIG=/tmp/kubeconfig
                 kubectl rollout status deployment/frontend-deployment -n ${namespace} --timeout=300s
             '
-            
-            # Get service information
-            echo "=== Deployment completed for ${environment} ==="
-            echo "External PostgreSQL Connection: ${POSTGRES_HOST}:${POSTGRES_PORT}"
-            echo "Database: ${POSTGRES_DB}"
-            echo "User: ${POSTGRES_USER}"
-            echo ""
-            docker run --rm -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" alpine/k8s:1.28.0 sh -c '
-                echo \$KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
+
+            echo "=== Summary (${environment}) ==="
+            docker run --rm -e KUBECONFIG_CONTENT=\"$KUBECONFIG_CONTENT\" alpine/k8s:1.28.0 sh -c '
+                echo $KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
                 export KUBECONFIG=/tmp/kubeconfig
-                kubectl get pods,svc,ingress -n ${namespace}
+                kubectl get pods,svc -n ${namespace}
             '
-            
-            # Clean up temporary files
+
             rm -f backend-${environment}.yaml frontend-${environment}.yaml
         """
 }
@@ -258,7 +252,10 @@ pipeline {
             steps {
                 script {
                     echo 'Deploying to Kubernetes production environment...'
-                    deployToKubernetes('production')
+                    // Bind registry credentials for secret creation
+                    withCredentials([usernamePassword(credentialsId: REGISTRY_CREDENTIALS, usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                        deployToKubernetes('production')
+                    }
                 }
             }
         }

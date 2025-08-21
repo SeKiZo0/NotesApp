@@ -29,6 +29,8 @@ metadata:
   namespace: notes-app-prod
   labels:
     app: backend
+# NOTE: Image uses placeholder __IMAGE_TAG__ substituted by Jenkins pipeline.
+# Ensure cluster nodes trust the insecure HTTP registry or configure mirror / TLS.
 spec:
   replicas: 2
   selector:
@@ -39,9 +41,11 @@ spec:
       labels:
         app: backend
     spec:
+      imagePullSecrets:
+      - name: docker-registry-secret
       containers:
       - name: backend
-        image: 192.168.1.150:3000/morris/notes-app-backend:latest
+        image: 192.168.1.150:3000/morris/notes-app-backend:__IMAGE_TAG__
         imagePullPolicy: Always
         ports:
         - containerPort: 5000
