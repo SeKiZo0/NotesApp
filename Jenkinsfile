@@ -58,8 +58,8 @@ pipeline {
     environment {
         // Docker Registry Configuration
         DOCKER_REGISTRY = '192.168.1.150:3000'
-        DOCKER_REPO_FRONTEND = "${DOCKER_REGISTRY}/notes-app-frontend"
-        DOCKER_REPO_BACKEND = "${DOCKER_REGISTRY}/notes-app-backend"
+        DOCKER_REPO_FRONTEND = "${DOCKER_REGISTRY}/Morris/notes-app-frontend"
+        DOCKER_REPO_BACKEND = "${DOCKER_REGISTRY}/Morris/notes-app-backend"
         
         // Credentials
         REGISTRY_CREDENTIALS = 'forgejo-registry-credentials'
@@ -161,14 +161,47 @@ pipeline {
             steps {
                 script {
                     echo 'Pushing Docker images to registry...'
+                    
+                    // First, try to create repositories in case they don't exist
+                    try {
+                        echo 'Attempting to ensure repositories exist...'
+                        sh """
+                            # Test registry connectivity
+                            curl -f http://${DOCKER_REGISTRY}/v2/ || echo "Registry health check failed"
+                            
+                            # Try to check if repositories exist, if not this will help create them
+                            curl -f http://${DOCKER_REGISTRY}/v2/Morris/notes-app-frontend/tags/list || echo "Frontend repo may not exist yet"
+                            curl -f http://${DOCKER_REGISTRY}/v2/Morris/notes-app-backend/tags/list || echo "Backend repo may not exist yet"
+                            
+                            # Login manually first to ensure credentials work
+                            echo "Testing manual docker login..."
+                            docker login http://${DOCKER_REGISTRY} -u \${DOCKER_REGISTRY_USR} -p \${DOCKER_REGISTRY_PSW}
+                        """
+                    } catch (Exception e) {
+                        echo "Registry setup warning: ${e.getMessage()}"
+                    }
+                    
+                    // Now try to push images with better error handling
                     docker.withRegistry("http://${DOCKER_REGISTRY}", REGISTRY_CREDENTIALS) {
-                        def frontendImg = docker.image(env.FRONTEND_IMAGE)
-                        frontendImg.push()
-                        frontendImg.push('latest')
+                        try {
+                            echo 'Pushing frontend image...'
+                            def frontendImg = docker.image(env.FRONTEND_IMAGE)
+                            frontendImg.push()
+                            frontendImg.push('latest')
+                            echo '✅ Frontend image pushed successfully'
+                        } catch (Exception e) {
+                            error "Failed to push frontend image: ${e.getMessage()}"
+                        }
                         
-                        def backendImg = docker.image(env.BACKEND_IMAGE)
-                        backendImg.push()
-                        backendImg.push('latest')
+                        try {
+                            echo 'Pushing backend image...'
+                            def backendImg = docker.image(env.BACKEND_IMAGE)
+                            backendImg.push()
+                            backendImg.push('latest')
+                            echo '✅ Backend image pushed successfully'
+                        } catch (Exception e) {
+                            error "Failed to push backend image: ${e.getMessage()}"
+                        }
                     }
                 }
             }
