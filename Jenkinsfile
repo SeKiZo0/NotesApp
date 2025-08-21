@@ -136,7 +136,7 @@ pipeline {
                                 "${DOCKER_REPO_FRONTEND}:${BUILD_TAG}",
                                 "-f frontend/Dockerfile frontend/"
                             )
-                            frontendImage.tag("${DOCKER_REPO_FRONTEND}:latest")
+                            frontendImage.tag("latest")
                             env.FRONTEND_IMAGE = "${DOCKER_REPO_FRONTEND}:${BUILD_TAG}"
                         }
                     }
@@ -149,7 +149,7 @@ pipeline {
                                 "${DOCKER_REPO_BACKEND}:${BUILD_TAG}",
                                 "-f backend/Dockerfile backend/"
                             )
-                            backendImage.tag("${DOCKER_REPO_BACKEND}:latest")
+                            backendImage.tag("latest")
                             env.BACKEND_IMAGE = "${DOCKER_REPO_BACKEND}:${BUILD_TAG}"
                         }
                     }
