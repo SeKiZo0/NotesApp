@@ -28,9 +28,17 @@ def deployToKubernetes(environment) {
             # Read kubeconfig content as base64 to pass via environment variable
             KUBECONFIG_CONTENT=\$(cat ${env.WORKSPACE}/k8s/kubeconfig.yaml | base64 -w 0)
             
-            # Create temporary deployment files with updated images for production
-            sed 's|192.168.1.150:3000/morris/notes-app-backend:latest|${env.BACKEND_IMAGE}|g' k8s/production-backend.yaml > backend-${environment}.yaml
-            sed 's|192.168.1.150:3000/morris/notes-app-frontend:latest|${env.FRONTEND_IMAGE}|g' k8s/production-frontend.yaml > frontend-${environment}.yaml
+            # Create temporary deployment files with latest tags (fallback for insecure registry)
+            sed 's|192.168.1.150:3000/morris/notes-app-backend:latest|192.168.1.150:3000/morris/notes-app-backend:latest|g' k8s/production-backend.yaml > backend-${environment}.yaml
+            sed 's|192.168.1.150:3000/morris/notes-app-frontend:latest|192.168.1.150:3000/morris/notes-app-frontend:latest|g' k8s/production-frontend.yaml > frontend-${environment}.yaml
+            
+            echo "Using latest tags to avoid registry SSL issues:"
+            echo "Backend: 192.168.1.150:3000/morris/notes-app-backend:latest"
+            echo "Frontend: 192.168.1.150:3000/morris/notes-app-frontend:latest"
+            
+            echo "Checking if images exist in registry..."
+            curl -s http://192.168.1.150:3000/v2/morris/notes-app-backend/tags/list || echo "Failed to check backend tags"
+            curl -s http://192.168.1.150:3000/v2/morris/notes-app-frontend/tags/list || echo "Failed to check frontend tags"
             
             # Apply backend deployment (with external PostgreSQL connection)
             echo "Deploying backend with external PostgreSQL connection..."
