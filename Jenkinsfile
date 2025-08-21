@@ -19,6 +19,37 @@ pipeline {
     }
     
     stages {
+        stage('Setup Docker Registry') {
+            steps {
+                script {
+                    sh """
+                        echo "Configuring Docker for insecure registry access..."
+                        
+                        # Check if daemon.json exists and backup if needed
+                        if [ -f /etc/docker/daemon.json ]; then
+                            sudo cp /etc/docker/daemon.json /etc/docker/daemon.json.backup
+                        fi
+                        
+                        # Create daemon.json with insecure registry configuration
+                        echo '{
+                          "insecure-registries": ["${DOCKER_REGISTRY}"]
+                        }' | sudo tee /etc/docker/daemon.json
+                        
+                        # Restart Docker daemon
+                        sudo systemctl restart docker
+                        
+                        # Wait for Docker to be ready
+                        sleep 15
+                        
+                        # Verify Docker is running
+                        docker info
+                        
+                        echo "Docker configured for insecure registry: ${DOCKER_REGISTRY}"
+                    """
+                }
+            }
+        }
+        
         stage('Checkout') {
             steps {
                 checkout scm
@@ -159,7 +190,7 @@ pipeline {
                     sh """
                         echo "Pushing images to registry..."
                         docker push ${DOCKER_REPO_FRONTEND}:${BUILD_TAG}
-                        docker push ${DOCKER_REPO_FRONTEND}:latest
+                        docker push ${DOCKER_REPO_FRONTEND}:latest  
                         docker push ${DOCKER_REPO_BACKEND}:${BUILD_TAG}
                         docker push ${DOCKER_REPO_BACKEND}:latest
                     """
