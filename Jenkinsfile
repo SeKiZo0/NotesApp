@@ -5,6 +5,9 @@ def deployToKubernetes(environment) {
     
     // Create namespace if it doesn't exist - using Docker-based kubectl with explicit KUBECONFIG
     sh """
+        # Set proper permissions on kubeconfig file
+        chmod 644 ${env.WORKSPACE}/k8s/kubeconfig.yaml
+        
         docker run --rm -e KUBECONFIG=/root/.kube/config -v ${env.WORKSPACE}/k8s/kubeconfig.yaml:/root/.kube/config bitnami/kubectl:latest \
             create namespace ${namespace} --dry-run=client -o yaml | \
         docker run --rm -i -e KUBECONFIG=/root/.kube/config -v ${env.WORKSPACE}/k8s/kubeconfig.yaml:/root/.kube/config bitnami/kubectl:latest \
