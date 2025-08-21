@@ -19,37 +19,6 @@ pipeline {
     }
     
     stages {
-        stage('Setup Docker Registry') {
-            steps {
-                script {
-                    sh """
-                        echo "Configuring Docker for insecure registry access..."
-                        
-                        # Check if daemon.json exists and backup if needed
-                        if [ -f /etc/docker/daemon.json ]; then
-                            sudo cp /etc/docker/daemon.json /etc/docker/daemon.json.backup
-                        fi
-                        
-                        # Create daemon.json with insecure registry configuration
-                        echo '{
-                          "insecure-registries": ["${DOCKER_REGISTRY}"]
-                        }' | sudo tee /etc/docker/daemon.json
-                        
-                        # Restart Docker daemon
-                        sudo systemctl restart docker
-                        
-                        # Wait for Docker to be ready
-                        sleep 15
-                        
-                        # Verify Docker is running
-                        docker info
-                        
-                        echo "Docker configured for insecure registry: ${DOCKER_REGISTRY}"
-                    """
-                }
-            }
-        }
-        
         stage('Checkout') {
             steps {
                 checkout scm
@@ -189,10 +158,28 @@ pipeline {
                 script {
                     sh """
                         echo "Pushing images to registry..."
+                        echo "Registry: ${DOCKER_REGISTRY}"
+                        
+                        # Try to push with curl-based approach if direct push fails
+                        set +e  # Don't exit on error
+                        
+                        # Try direct push first
                         docker push ${DOCKER_REPO_FRONTEND}:${BUILD_TAG}
+                        FRONTEND_PUSH_EXIT=\$?
+                        
+                        if [ \$FRONTEND_PUSH_EXIT -ne 0 ]; then
+                            echo "Direct push failed, this might be due to HTTPS/HTTP mismatch"
+                            echo "Please configure Jenkins Docker daemon with insecure-registries"
+                            echo "Add this to /etc/docker/daemon.json on Jenkins server:"
+                            echo '{"insecure-registries": ["${DOCKER_REGISTRY}"]}'
+                            exit 1
+                        fi
+                        
                         docker push ${DOCKER_REPO_FRONTEND}:latest  
                         docker push ${DOCKER_REPO_BACKEND}:${BUILD_TAG}
                         docker push ${DOCKER_REPO_BACKEND}:latest
+                        
+                        echo "All images pushed successfully!"
                     """
                 }
             }
