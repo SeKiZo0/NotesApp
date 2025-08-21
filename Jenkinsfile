@@ -46,7 +46,6 @@ def deployToKubernetes(environment) {
             docker run --rm -v ${env.WORKSPACE}/k8s/kubeconfig.yaml:/root/.kube/config \
                 bitnami/kubectl:latest get pods,svc,ingress -n ${namespace}
         """
-    }
 }
 
 pipeline {
