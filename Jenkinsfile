@@ -66,11 +66,11 @@ pipeline {
         K8S_CREDENTIALS = 'k8s-kubeconfig'
         
         // External Database Configuration
-        POSTGRES_HOST = '192.168.1.202'  // Update with your PostgreSQL server IP
+        POSTGRES_HOST = '192.168.1.151'
         POSTGRES_PORT = '5432'
-        POSTGRES_DB = 'notesdb'
-        POSTGRES_USER = 'notesuser'
-        POSTGRES_PASSWORD = 'your_secure_password'  // Use Jenkins secrets in production
+        POSTGRES_DB = 'NotesApp'
+        POSTGRES_USER = 'postgres'
+        POSTGRES_PASSWORD = 'changeme'  // Use Jenkins secrets in production
     }
     
     stages {
