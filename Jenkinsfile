@@ -5,11 +5,20 @@ def deployToKubernetes(environment) {
     
     // Create namespace if it doesn't exist - using Docker-based kubectl with explicit KUBECONFIG
     sh """
-        # Use sudo to run docker commands with proper permissions
-        sudo docker run --rm -e KUBECONFIG=/root/.kube/config -v ${env.WORKSPACE}/k8s/kubeconfig.yaml:/root/.kube/config bitnami/kubectl:latest \
+        # Ensure Jenkins user can access Docker without sudo by adding to docker group
+        # This should be done during Jenkins setup, but we'll handle file permissions directly
+        
+        # Make kubeconfig readable by copying to /tmp with proper permissions
+        cp ${env.WORKSPACE}/k8s/kubeconfig.yaml /tmp/kubeconfig-${env.BUILD_NUMBER}.yaml
+        chmod 644 /tmp/kubeconfig-${env.BUILD_NUMBER}.yaml
+        
+        docker run --rm -e KUBECONFIG=/root/.kube/config -v /tmp/kubeconfig-${env.BUILD_NUMBER}.yaml:/root/.kube/config bitnami/kubectl:latest \
             create namespace ${namespace} --dry-run=client -o yaml | \
-        sudo docker run --rm -i -e KUBECONFIG=/root/.kube/config -v ${env.WORKSPACE}/k8s/kubeconfig.yaml:/root/.kube/config bitnami/kubectl:latest \
+        docker run --rm -i -e KUBECONFIG=/root/.kube/config -v /tmp/kubeconfig-${env.BUILD_NUMBER}.yaml:/root/.kube/config bitnami/kubectl:latest \
             apply -f - --validate=false
+        
+        # Clean up temporary file
+        rm -f /tmp/kubeconfig-${env.BUILD_NUMBER}.yaml
     """
         
         // Note: PostgreSQL is external - no deployment needed
@@ -17,25 +26,29 @@ def deployToKubernetes(environment) {
         
         // Update image tags in deployments and deploy apps
         sh """
+            # Create temporary kubeconfig with proper permissions
+            cp ${env.WORKSPACE}/k8s/kubeconfig.yaml /tmp/kubeconfig-${environment}-${env.BUILD_NUMBER}.yaml
+            chmod 644 /tmp/kubeconfig-${environment}-${env.BUILD_NUMBER}.yaml
+            
             # Create temporary deployment files with updated images for production
             sed 's|192.168.1.150:3000/morris/notes-app-backend:latest|${env.BACKEND_IMAGE}|g' k8s/production-backend.yaml > backend-${environment}.yaml
             sed 's|192.168.1.150:3000/morris/notes-app-frontend:latest|${env.FRONTEND_IMAGE}|g' k8s/production-frontend.yaml > frontend-${environment}.yaml
             
             # Apply backend deployment (with external PostgreSQL connection)
             echo "Deploying backend with external PostgreSQL connection..."
-            sudo docker run --rm -e KUBECONFIG=/root/.kube/config -v ${env.WORKSPACE}/k8s/kubeconfig.yaml:/root/.kube/config -v ${env.WORKSPACE}:/workspace \
+            docker run --rm -e KUBECONFIG=/root/.kube/config -v /tmp/kubeconfig-${environment}-${env.BUILD_NUMBER}.yaml:/root/.kube/config -v ${env.WORKSPACE}:/workspace \
                 bitnami/kubectl:latest apply -f /workspace/backend-${environment}.yaml -n ${namespace} --validate=false
             
             # Wait for backend to be ready
             echo "Waiting for backend deployment to complete..."
-            sudo docker run --rm -e KUBECONFIG=/root/.kube/config -v ${env.WORKSPACE}/k8s/kubeconfig.yaml:/root/.kube/config \
+            docker run --rm -e KUBECONFIG=/root/.kube/config -v /tmp/kubeconfig-${environment}-${env.BUILD_NUMBER}.yaml:/root/.kube/config \
                 bitnami/kubectl:latest rollout status deployment/backend-deployment -n ${namespace} --timeout=300s
             
             # Apply frontend deployment  
             echo "Deploying frontend..."
-            sudo docker run --rm -e KUBECONFIG=/root/.kube/config -v ${env.WORKSPACE}/k8s/kubeconfig.yaml:/root/.kube/config -v ${env.WORKSPACE}:/workspace \
+            docker run --rm -e KUBECONFIG=/root/.kube/config -v /tmp/kubeconfig-${environment}-${env.BUILD_NUMBER}.yaml:/root/.kube/config -v ${env.WORKSPACE}:/workspace \
                 bitnami/kubectl:latest apply -f /workspace/frontend-${environment}.yaml -n ${namespace} --validate=false
-            sudo docker run --rm -e KUBECONFIG=/root/.kube/config -v ${env.WORKSPACE}/k8s/kubeconfig.yaml:/root/.kube/config \
+            docker run --rm -e KUBECONFIG=/root/.kube/config -v /tmp/kubeconfig-${environment}-${env.BUILD_NUMBER}.yaml:/root/.kube/config \
                 bitnami/kubectl:latest rollout status deployment/frontend-deployment -n ${namespace} --timeout=300s
             
             # Get service information
@@ -44,8 +57,12 @@ def deployToKubernetes(environment) {
             echo "Database: ${POSTGRES_DB}"
             echo "User: ${POSTGRES_USER}"
             echo ""
-            sudo docker run --rm -e KUBECONFIG=/root/.kube/config -v ${env.WORKSPACE}/k8s/kubeconfig.yaml:/root/.kube/config \
+            docker run --rm -e KUBECONFIG=/root/.kube/config -v /tmp/kubeconfig-${environment}-${env.BUILD_NUMBER}.yaml:/root/.kube/config \
                 bitnami/kubectl:latest get pods,svc,ingress -n ${namespace}
+            
+            # Clean up temporary files
+            rm -f /tmp/kubeconfig-${environment}-${env.BUILD_NUMBER}.yaml
+            rm -f backend-${environment}.yaml frontend-${environment}.yaml
         """
 }
 
@@ -236,6 +253,10 @@ pipeline {
                         # Wait a bit for services to be ready
                         sleep 30
                         
+                        # Create temporary kubeconfig for health checks
+                        cp k8s/kubeconfig.yaml /tmp/kubeconfig-health-${env.BUILD_NUMBER}.yaml
+                        chmod 644 /tmp/kubeconfig-health-${env.BUILD_NUMBER}.yaml
+                        
                         echo "=== Application Health Check ==="
                         echo "Namespace: notes-app-prod"
                         echo "Kubeconfig server check:"
@@ -243,18 +264,18 @@ pipeline {
                             
                             # Check if pods are running with better error handling
                             echo "Checking pod status..."
-                            if sudo docker run --rm -e KUBECONFIG=/root/.kube/config -v ${env.WORKSPACE}/k8s/kubeconfig.yaml:/root/.kube/config \
+                            if docker run --rm -e KUBECONFIG=/root/.kube/config -v /tmp/kubeconfig-health-${env.BUILD_NUMBER}.yaml:/root/.kube/config \
                                 bitnami/kubectl:latest get pods -n notes-app-prod 2>/dev/null; then
                                 echo "✅ Pods found in notes-app-prod namespace"
                                 
                                 # Test if any backend pods are running
                                 echo "Checking backend pods specifically..."
-                                sudo docker run --rm -e KUBECONFIG=/root/.kube/config -v ${env.WORKSPACE}/k8s/kubeconfig.yaml:/root/.kube/config \
+                                docker run --rm -e KUBECONFIG=/root/.kube/config -v /tmp/kubeconfig-health-${env.BUILD_NUMBER}.yaml:/root/.kube/config \
                                     bitnami/kubectl:latest get pods -n notes-app-prod -l app=notes-backend || echo "No backend pods found"
                                     
                                 # Get service information
                                 echo "Checking services..."
-                                sudo docker run --rm -e KUBECONFIG=/root/.kube/config -v ${env.WORKSPACE}/k8s/kubeconfig.yaml:/root/.kube/config \
+                                docker run --rm -e KUBECONFIG=/root/.kube/config -v /tmp/kubeconfig-health-${env.BUILD_NUMBER}.yaml:/root/.kube/config \
                                     bitnami/kubectl:latest get svc -n notes-app-prod || echo "No services found"
                             else
                                 echo "⚠️  Could not connect to Kubernetes cluster or namespace notes-app-prod doesn't exist"
@@ -267,6 +288,9 @@ pipeline {
                             echo "✅ User: postgres ✅"
                             
                             echo "=== Health check completed ==="
+                            
+                            # Clean up temporary kubeconfig file
+                            rm -f /tmp/kubeconfig-health-${env.BUILD_NUMBER}.yaml
                         """
                     }
                 }
