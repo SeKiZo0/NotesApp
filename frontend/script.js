@@ -1,6 +1,7 @@
 class NotesApp {
     constructor() {
-        this.apiUrl = 'http://localhost:5000/api';
+        // Use relative path so requests go to same-origin Nginx which proxies /api to backend service
+        this.apiUrl = '/api';
         this.notes = [];
         this.init();
     }
