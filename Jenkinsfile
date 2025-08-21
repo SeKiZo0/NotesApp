@@ -36,8 +36,8 @@ def deployToKubernetes(environment) {
             sed "s|192.168.1.150:3000/morris/notes-app-frontend:__IMAGE_TAG__|$FRONTEND_IMAGE|g" k8s/production-frontend.yaml > frontend-${environment}.yaml
 
             echo "Creating/Updating registry imagePullSecret (docker-registry-secret) in ${namespace}"
-            docker run --rm -e KUBECONFIG_CONTENT=\"$KUBECONFIG_CONTENT\" alpine/k8s:1.28.0 sh -c '
-              echo $KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
+                        docker run --rm -e KUBECONFIG_CONTENT=\"\$KUBECONFIG_CONTENT\" alpine/k8s:1.28.0 sh -c '
+                            echo \$KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
               export KUBECONFIG=/tmp/kubeconfig
               kubectl create secret docker-registry docker-registry-secret \
                 --docker-server=${DOCKER_REGISTRY} \
@@ -47,21 +47,21 @@ def deployToKubernetes(environment) {
             '
 
             echo "Deploying backend..."
-            docker run --rm -e KUBECONFIG_CONTENT=\"$KUBECONFIG_CONTENT\" -v ${env.WORKSPACE}:/workspace alpine/k8s:1.28.0 sh -c '
-                echo $KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
+            docker run --rm -e KUBECONFIG_CONTENT=\"\$KUBECONFIG_CONTENT\" -v ${env.WORKSPACE}:/workspace alpine/k8s:1.28.0 sh -c '
+                echo \$KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
                 export KUBECONFIG=/tmp/kubeconfig
                 kubectl apply -f /workspace/backend-${environment}.yaml -n ${namespace} --validate=false
             '
 
             echo "Waiting for backend rollout..."
-            if ! docker run --rm -e KUBECONFIG_CONTENT=\"$KUBECONFIG_CONTENT\" alpine/k8s:1.28.0 sh -c '
-                echo $KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
+            if ! docker run --rm -e KUBECONFIG_CONTENT=\"\$KUBECONFIG_CONTENT\" alpine/k8s:1.28.0 sh -c '
+                echo \$KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
                 export KUBECONFIG=/tmp/kubeconfig
                 kubectl rollout status deployment/backend-deployment -n ${namespace} --timeout=300s
             '; then
                 echo "Backend deployment failed, gathering diagnostics"
-                docker run --rm -e KUBECONFIG_CONTENT=\"$KUBECONFIG_CONTENT\" alpine/k8s:1.28.0 sh -c '
-                    echo $KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
+                docker run --rm -e KUBECONFIG_CONTENT=\"\$KUBECONFIG_CONTENT\" alpine/k8s:1.28.0 sh -c '
+                    echo \$KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
                     export KUBECONFIG=/tmp/kubeconfig
                     echo "=== Backend Pod Status ==="; kubectl get pods -n ${namespace} -l app=backend
                     echo "=== Events ==="; kubectl get events -n ${namespace} --sort-by=.metadata.creationTimestamp | tail -n 50
@@ -71,20 +71,20 @@ def deployToKubernetes(environment) {
             fi
 
             echo "Deploying frontend..."
-            docker run --rm -e KUBECONFIG_CONTENT=\"$KUBECONFIG_CONTENT\" -v ${env.WORKSPACE}:/workspace alpine/k8s:1.28.0 sh -c '
-                echo $KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
+            docker run --rm -e KUBECONFIG_CONTENT=\"\$KUBECONFIG_CONTENT\" -v ${env.WORKSPACE}:/workspace alpine/k8s:1.28.0 sh -c '
+                echo \$KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
                 export KUBECONFIG=/tmp/kubeconfig
                 kubectl apply -f /workspace/frontend-${environment}.yaml -n ${namespace} --validate=false
             '
-            docker run --rm -e KUBECONFIG_CONTENT=\"$KUBECONFIG_CONTENT\" alpine/k8s:1.28.0 sh -c '
-                echo $KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
+            docker run --rm -e KUBECONFIG_CONTENT=\"\$KUBECONFIG_CONTENT\" alpine/k8s:1.28.0 sh -c '
+                echo \$KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
                 export KUBECONFIG=/tmp/kubeconfig
                 kubectl rollout status deployment/frontend-deployment -n ${namespace} --timeout=300s
             '
 
             echo "=== Summary (${environment}) ==="
-            docker run --rm -e KUBECONFIG_CONTENT=\"$KUBECONFIG_CONTENT\" alpine/k8s:1.28.0 sh -c '
-                echo $KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
+            docker run --rm -e KUBECONFIG_CONTENT=\"\$KUBECONFIG_CONTENT\" alpine/k8s:1.28.0 sh -c '
+                echo \$KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
                 export KUBECONFIG=/tmp/kubeconfig
                 kubectl get pods,svc -n ${namespace}
             '
