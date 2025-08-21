@@ -1,3 +1,73 @@
+// Helper function for Kubernetes deployment - MUST be outside pipeline block
+def deployToKubernetes(environment) {
+    withCredentials([kubeconfigFile(credentialsId: K8S_CREDENTIALS, variable: 'KUBECONFIG')]) {
+        def namespace = environment == 'production' ? 'notes-app-prod' : 'notes-app-staging'
+        
+        // Create namespace if it doesn't exist
+        sh "kubectl create namespace ${namespace} --dry-run=client -o yaml | kubectl apply -f -"
+        
+        // Deploy PostgreSQL (only if not exists)
+        sh """
+            if ! kubectl get deployment postgres-deployment -n ${namespace} > /dev/null 2>&1; then
+                echo "Deploying PostgreSQL to ${environment}..."
+                
+                # Apply PostgreSQL deployment with secrets
+                kubectl apply -f k8s/postgres-deployment.yaml -n ${namespace}
+                
+                # Wait for PostgreSQL to be ready
+                echo "Waiting for PostgreSQL to be available..."
+                kubectl wait --for=condition=available --timeout=300s deployment/postgres-deployment -n ${namespace}
+                
+                # Verify PostgreSQL is accepting connections
+                echo "Verifying PostgreSQL connectivity..."
+                kubectl exec deployment/postgres-deployment -n ${namespace} -- pg_isready -U postgres
+                
+                echo "PostgreSQL deployment completed successfully"
+            else
+                echo "PostgreSQL already deployed in ${environment}"
+                
+                # Still verify it's healthy
+                kubectl exec deployment/postgres-deployment -n ${namespace} -- pg_isready -U postgres
+            fi
+        """
+        
+        // Update image tags in deployments
+        sh """
+            # Create temporary deployment files with updated images
+            sed 's|notes-app-backend:latest|${env.BACKEND_IMAGE}|g' k8s/backend-deployment.yaml > backend-${environment}.yaml
+            sed 's|notes-app-frontend:latest|${env.FRONTEND_IMAGE}|g' k8s/frontend-deployment.yaml > frontend-${environment}.yaml
+            
+            # Apply backend deployment (this includes the PostgreSQL connection config)
+            echo "Deploying backend with PostgreSQL connection..."
+            kubectl apply -f backend-${environment}.yaml -n ${namespace}
+            
+            # Wait for backend to be ready (it will wait for PostgreSQL via init container)
+            echo "Waiting for backend deployment to complete..."
+            kubectl rollout status deployment/backend-deployment -n ${namespace} --timeout=300s
+            
+            # Verify backend can connect to PostgreSQL
+            echo "Verifying backend-PostgreSQL connectivity..."
+            sleep 15  # Give backend time to initialize
+            kubectl exec deployment/backend-deployment -n ${namespace} -- curl -f http://localhost:5000/health
+            
+            # Apply frontend deployment  
+            echo "Deploying frontend..."
+            kubectl apply -f frontend-${environment}.yaml -n ${namespace}
+            kubectl rollout status deployment/frontend-deployment -n ${namespace} --timeout=300s
+            
+            # Get service information
+            echo "=== Deployment completed for ${environment} ==="
+            echo "PostgreSQL Connection Details:"
+            echo "  Host: postgres-service.${namespace}.svc.cluster.local"
+            echo "  Port: 5432"
+            echo "  Database: notesdb"
+            echo "  User: postgres"
+            echo ""
+            kubectl get pods,svc,ingress -n ${namespace}
+        """
+    }
+}
+
 pipeline {
     agent any
     
@@ -6,19 +76,209 @@ pipeline {
         DOCKER_REGISTRY = '192.168.1.150:3000'
         DOCKER_REPO_FRONTEND = "${DOCKER_REGISTRY}/notes-app-frontend"
         DOCKER_REPO_BACKEND = "${DOCKER_REGISTRY}/notes-app-backend"
-        BUILD_TAG = "${env.BUILD_NUMBER}-${env.GIT_COMMIT.take(7)}"
         
-        // Kubernetes Credentials
-        K8S_CREDENTIALS = 'kubernetes-config'
+        // Credentials
+        REGISTRY_CREDENTIALS = 'forgejo-registry-credentials'
+        K8S_CREDENTIALS = 'k8s-kubeconfig'
         
         // Database Configuration
-        POSTGRES_USER = 'notesuser'
-        POSTGRES_DB = 'notesapp'
+        POSTGRES_DB = 'notesdb'
+        POSTGRES_USER = 'postgres'
         POSTGRES_SERVICE = 'postgres-service'
         POSTGRES_PORT = '5432'
     }
     
     stages {
+        stage('Checkout') {
+            steps {
+                echo 'Checking out code from Forgejo...'
+                checkout scm
+                script {
+                    env.GIT_COMMIT_SHORT = sh(
+                        script: 'git rev-parse --short HEAD',
+                        returnStdout: true
+                    ).trim()
+                    env.BUILD_TAG = "${env.BUILD_NUMBER}-${env.GIT_COMMIT_SHORT}"
+                    echo "Build tag: ${env.BUILD_TAG}"
+                }
+            }
+        }
+        
+        stage('Test Backend') {
+            steps {
+                dir('backend') {
+                    sh 'npm ci'
+                    sh 'npm audit --audit-level moderate'
+                    // Add actual tests here when available
+                    // sh 'npm test'
+                }
+            }
+        }
+        
+        stage('Test Frontend') {
+            steps {
+                dir('frontend') {
+                    sh 'npm ci'
+                    sh 'npm audit --audit-level moderate'
+                    // Add frontend tests here when available
+                    // sh 'npm test'
+                }
+            }
+        }
+        
+        stage('Build Docker Images') {
+            parallel {
+                stage('Build Frontend Image') {
+                    steps {
+                        script {
+                            echo "Building frontend image: ${DOCKER_REPO_FRONTEND}:${BUILD_TAG}"
+                            def frontendImage = docker.build(
+                                "${DOCKER_REPO_FRONTEND}:${BUILD_TAG}",
+                                "-f frontend/Dockerfile frontend/"
+                            )
+                            frontendImage.tag("${DOCKER_REPO_FRONTEND}:latest")
+                            env.FRONTEND_IMAGE = "${DOCKER_REPO_FRONTEND}:${BUILD_TAG}"
+                        }
+                    }
+                }
+                stage('Build Backend Image') {
+                    steps {
+                        script {
+                            echo "Building backend image: ${DOCKER_REPO_BACKEND}:${BUILD_TAG}"
+                            def backendImage = docker.build(
+                                "${DOCKER_REPO_BACKEND}:${BUILD_TAG}",
+                                "-f backend/Dockerfile backend/"
+                            )
+                            backendImage.tag("${DOCKER_REPO_BACKEND}:latest")
+                            env.BACKEND_IMAGE = "${DOCKER_REPO_BACKEND}:${BUILD_TAG}"
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Security Scan') {
+            parallel {
+                stage('Scan Frontend Image') {
+                    steps {
+                        sh """
+                            echo "Running security scan on frontend image..."
+                            # Using Trivy for container security scanning
+                            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+                            aquasec/trivy image --exit-code 0 --no-progress \
+                            --format table ${DOCKER_REPO_FRONTEND}:${BUILD_TAG} || echo "Security scan completed with warnings"
+                        """
+                    }
+                }
+                stage('Scan Backend Image') {
+                    steps {
+                        sh """
+                            echo "Running security scan on backend image..."
+                            # Using Trivy for container security scanning
+                            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+                            aquasec/trivy image --exit-code 0 --no-progress \
+                            --format table ${DOCKER_REPO_BACKEND}:${BUILD_TAG} || echo "Security scan completed with warnings"
+                        """
+                    }
+                }
+            }
+        }
+        
+        stage('Push Docker Images') {
+            when {
+                anyOf {
+                    branch 'main'
+                    branch 'develop'
+                    branch 'master'
+                }
+            }
+            steps {
+                script {
+                    echo "🚀 Pushing images to Forgejo registry..."
+                    echo "Registry: ${DOCKER_REGISTRY}"
+                    echo "Frontend: ${DOCKER_REPO_FRONTEND}:${BUILD_TAG}"
+                    echo "Backend: ${DOCKER_REPO_BACKEND}:${BUILD_TAG}"
+                    echo ""
+                    
+                    // Test registry connectivity first with better error handling
+                    sh """
+                        echo "🔍 Testing registry connectivity..."
+                        REGISTRY_STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://${DOCKER_REGISTRY}/v2/ 2>/dev/null || echo "000")
+                        echo "Registry HTTP status: \$REGISTRY_STATUS"
+                        
+                        if [ "\$REGISTRY_STATUS" = "200" ]; then
+                            echo "✅ Registry is accessible and ready"
+                        elif [ "\$REGISTRY_STATUS" = "401" ]; then
+                            echo "🔑 Registry requires authentication (expected with credentials)"
+                        else
+                            echo "⚠️  Registry connectivity issue (HTTP \$REGISTRY_STATUS)"
+                            echo "🔍 Full registry response:"
+                            curl -v http://${DOCKER_REGISTRY}/v2/ 2>&1 || echo "Connection failed"
+                        fi
+                    """
+                    
+                    // Push with authentication using Jenkins credentials
+                    try {
+                        docker.withRegistry("http://${DOCKER_REGISTRY}", REGISTRY_CREDENTIALS) {
+                            echo "🔑 Successfully authenticated with registry"
+                            
+                            // Push frontend
+                            echo "📦 Pushing frontend image..."
+                            def frontendImg = docker.image("${DOCKER_REPO_FRONTEND}:${BUILD_TAG}")
+                            frontendImg.push()
+                            frontendImg.push('latest')
+                            echo "✅ Frontend image pushed successfully"
+                            
+                            // Push backend
+                            echo "📦 Pushing backend image..."
+                            def backendImg = docker.image("${DOCKER_REPO_BACKEND}:${BUILD_TAG}")
+                            backendImg.push()
+                            backendImg.push('latest')
+                            echo "✅ Backend image pushed successfully"
+                            
+                            echo ""
+                            echo "🎉 All images pushed successfully!"
+                            echo "Images available at:"
+                            echo "  • Frontend: ${DOCKER_REPO_FRONTEND}:${BUILD_TAG}"
+                            echo "  • Backend: ${DOCKER_REPO_BACKEND}:${BUILD_TAG}"
+                        }
+                    } catch (Exception e) {
+                        echo ""
+                        echo "❌ DOCKER PUSH FAILED"
+                        echo "═══════════════════════════════════════"
+                        echo ""
+                        echo "🔍 Error details: ${e.getMessage()}"
+                        echo ""
+                        echo "🛠️  TROUBLESHOOTING CHECKLIST:"
+                        echo ""
+                        echo "1️⃣  CREDENTIALS ISSUE:"
+                        echo "   • Check Jenkins credential: '${REGISTRY_CREDENTIALS}'"
+                        echo "   • Verify username/password are correct"
+                        echo "   • Test manual login: docker login ${DOCKER_REGISTRY}"
+                        echo ""
+                        echo "2️⃣  REGISTRY SERVER ISSUES:"
+                        echo "   • SSH to registry server: ssh [user]@192.168.1.150"
+                        echo "   • Check if registry is running: docker ps | grep registry"
+                        echo "   • If not running, start it: docker-compose up -d"
+                        echo ""
+                        echo "3️⃣  DOCKER DAEMON CONFIGURATION:"
+                        echo "   • Verify insecure registry config on Jenkins server:"
+                        echo "   • docker info | grep -A5 'Insecure Registries'"
+                        echo "   • Should show: 192.168.1.150:3000"
+                        echo ""
+                        echo "4️⃣  NETWORK/FIREWALL:"
+                        echo "   • Test connectivity: curl http://192.168.1.150:3000/v2/"
+                        echo "   • Check firewall rules between Jenkins and registry"
+                        echo ""
+                        echo "💡 QUICK FIX: If credentials are missing, add them in Jenkins:"
+                        echo "   Manage Jenkins → Credentials → Add Username/Password"
+                        echo "   ID: forgejo-registry-credentials"
+                        echo ""
+                        throw e
+                    }
+                }
+            }
+        }    stages {
         stage('Checkout') {
             steps {
                 checkout scm
@@ -261,51 +521,37 @@ pipeline {
                             exit 1
                         fi
                     """
+        
+        stage('Deploy to Staging') {
+            when {
+                anyOf {
+                    branch 'develop'
+                    branch 'dev'
+                }
+            }
+            steps {
+                script {
+                    echo 'Deploying to Kubernetes staging environment...'
+                    deployToKubernetes('staging')
                 }
             }
         }
         
-        stage('Deploy to Kubernetes') {
+        stage('Deploy to Production') {
+            when {
+                anyOf {
+                    branch 'main'
+                    branch 'master'
+                }
+            }
             steps {
                 script {
-                    def environment = env.BRANCH_NAME == 'main' || env.BRANCH_NAME == 'master' ? 'production' : 'staging'
-                    def namespace = environment == 'production' ? 'notes-app-prod' : 'notes-app-staging'
+                    // Manual approval for production deployment
+                    input message: 'Deploy to production?', ok: 'Deploy',
+                          submitterParameter: 'DEPLOYER'
                     
-                    echo "Deploying to ${environment} environment (namespace: ${namespace})"
-                    
-                    withCredentials([string(credentialsId: K8S_CREDENTIALS, variable: 'KUBECONFIG_CONTENT')]) {
-                        sh """
-                            # Setup kubeconfig
-                            mkdir -p ~/.kube
-                            echo "\$KUBECONFIG_CONTENT" | base64 -d > ~/.kube/config
-                            chmod 600 ~/.kube/config
-                            
-                            # Create namespace if it doesn't exist
-                            kubectl create namespace ${namespace} --dry-run=client -o yaml | kubectl apply -f -
-                            
-                            # Deploy PostgreSQL
-                            sed 's/namespace: notes-app-staging/namespace: ${namespace}/g' k8s/postgres-deployment.yaml | kubectl apply -f -
-                            sed 's/namespace: notes-app-staging/namespace: ${namespace}/g' k8s/postgres-service.yaml | kubectl apply -f -
-                            sed 's/namespace: notes-app-staging/namespace: ${namespace}/g' k8s/postgres-secret.yaml | kubectl apply -f -
-                            
-                            # Deploy Backend
-                            sed -e 's/namespace: notes-app-staging/namespace: ${namespace}/g' \
-                                -e 's|image: .*backend.*|image: ${DOCKER_REPO_BACKEND}:${BUILD_TAG}|g' \
-                                k8s/backend-deployment.yaml | kubectl apply -f -
-                            sed 's/namespace: notes-app-staging/namespace: ${namespace}/g' k8s/backend-service.yaml | kubectl apply -f -
-                            
-                            # Deploy Frontend
-                            sed -e 's/namespace: notes-app-staging/namespace: ${namespace}/g' \
-                                -e 's|image: .*frontend.*|image: ${DOCKER_REPO_FRONTEND}:${BUILD_TAG}|g' \
-                                k8s/frontend-deployment.yaml | kubectl apply -f -
-                            sed 's/namespace: notes-app-staging/namespace: ${namespace}/g' k8s/frontend-service.yaml | kubectl apply -f -
-                            
-                            # Deploy Ingress
-                            sed 's/namespace: notes-app-staging/namespace: ${namespace}/g' k8s/ingress.yaml | kubectl apply -f -
-                            
-                            echo "Deployment completed for ${environment}!"
-                        """
-                    }
+                    echo 'Deploying to Kubernetes production environment...'
+                    deployToKubernetes('production')
                 }
             }
         }
@@ -318,35 +564,11 @@ pipeline {
                     
                     echo "Verifying database setup in ${environment}..."
                     
-                    withCredentials([string(credentialsId: K8S_CREDENTIALS, variable: 'KUBECONFIG_CONTENT')]) {
-                        // Debug: Check if credential exists and basic info
-                        sh '''
-                            echo "=== CREDENTIAL DEBUG INFO ==="
-                            echo "Credential ID used: kubernetes-config"
-                            echo "Content length: ${#KUBECONFIG_CONTENT}"
-                            echo "First 50 chars: ${KUBECONFIG_CONTENT:0:50}..."
-                            echo "Last 50 chars: ...${KUBECONFIG_CONTENT: -50}"
-                            
-                            # Try to decode with verbose error reporting
-                            echo "=== ATTEMPTING BASE64 DECODE ==="
-                            if echo "$KUBECONFIG_CONTENT" | base64 -d > /tmp/test-kubeconfig 2>&1; then
-                                echo "✅ Base64 decode successful"
-                                echo "Decoded content preview:"
-                                head -5 /tmp/test-kubeconfig
-                                rm -f /tmp/test-kubeconfig
-                            else
-                                echo "❌ Base64 decode failed"
-                                echo "Attempting to identify the issue..."
-                                echo "$KUBECONFIG_CONTENT" | base64 -d 2>&1 || echo "Decode error occurred"
-                            fi
-                        '''
-                        
-                        // If debug passes, continue with database verification
+                    withCredentials([kubeconfigFile(credentialsId: K8S_CREDENTIALS, variable: 'KUBECONFIG')]) {
                         sh """
-                            echo "Setting up kubeconfig for database verification..."
-                            mkdir -p ~/.kube
-                            echo "\$KUBECONFIG_CONTENT" | base64 -d > ~/.kube/config
-                            chmod 600 ~/.kube/config
+                            # Verify PostgreSQL is running and ready
+                            echo "Checking PostgreSQL status..."
+                            kubectl get pods -l app=postgres -n ${namespace}
                             
                             # Test PostgreSQL connectivity
                             echo "Testing PostgreSQL connectivity..."
@@ -373,42 +595,10 @@ pipeline {
         stage('Run Health Checks') {
             steps {
                 script {
-                    def environment = env.BRANCH_NAME == 'main' || env.BRANCH_NAME == 'master' ? 'production' : 'staging'
-                    def namespace = environment == 'production' ? 'notes-app-prod' : 'notes-app-staging'
+                    def namespace = env.BRANCH_NAME == 'main' || env.BRANCH_NAME == 'master' ? 'notes-app-prod' : 'notes-app-staging'
+                    echo "Running health checks in ${namespace} environment..."
                     
-                    echo "Running health checks for ${environment}..."
-                    
-                    withCredentials([string(credentialsId: K8S_CREDENTIALS, variable: 'KUBECONFIG_CONTENT')]) {
-                        // Setup kubeconfig with validation
-                        sh """
-                            echo "Setting up kubeconfig for health checks..."
-                            mkdir -p ~/.kube
-                            
-                            # Validate kubeconfig content exists
-                            if [ -z "\$KUBECONFIG_CONTENT" ]; then
-                                echo "ERROR: KUBECONFIG_CONTENT is empty. Please check kubernetes-config credential."
-                                exit 1
-                            fi
-                            
-                            # Decode and validate base64 content
-                            echo "Decoding kubeconfig content..."
-                            if ! echo "\$KUBECONFIG_CONTENT" | base64 -d > ~/.kube/config 2>/dev/null; then
-                                echo "ERROR: Failed to decode kubeconfig. Please ensure the credential contains valid base64 content."
-                                echo "To create valid content: cat ~/.kube/config | base64 -w 0"
-                                exit 1
-                            fi
-                            
-                            chmod 600 ~/.kube/config
-                            
-                            # Validate kubeconfig format
-                            if ! kubectl config view --minify >/dev/null 2>&1; then
-                                echo "ERROR: Invalid kubeconfig format after decoding."
-                                exit 1
-                            fi
-                            
-                            echo "Kubeconfig setup completed successfully"
-                        """
-                        
+                    withCredentials([kubeconfigFile(credentialsId: K8S_CREDENTIALS, variable: 'KUBECONFIG')]) {
                         sh """
                             # Wait a bit for services to be ready
                             sleep 30
@@ -443,28 +633,35 @@ pipeline {
         success {
             script {
                 def environment = env.BRANCH_NAME == 'main' || env.BRANCH_NAME == 'master' ? 'production' : 'staging'
-                def buildUrl = "${env.BUILD_URL}"
-                
-                echo """
-✅ *Notes App Deployed Successfully!*
+                def message = """
+✅ *Notes App Deployment Successful!*
 📦 Build: ${BUILD_TAG}
 🌍 Environment: ${environment}
-🔗 Build URL: ${buildUrl}
-                """
+� Images:
+  • Frontend: ${DOCKER_REPO_FRONTEND}:${BUILD_TAG}
+  • Backend: ${DOCKER_REPO_BACKEND}:${BUILD_TAG}
+🚀 Deployed by: ${env.DEPLOYER ?: env.BUILD_USER ?: 'Jenkins'}
+"""
+                echo message
+                
+                // Uncomment below if you have Slack integration
+                // slackSend(color: 'good', message: message)
             }
         }
         
         failure {
             script {
                 def environment = env.BRANCH_NAME == 'main' || env.BRANCH_NAME == 'master' ? 'production' : 'staging'
-                def buildUrl = "${env.BUILD_URL}"
-                
-                echo """
+                def message = """
 ❌ *Notes App Deployment Failed!*
 📦 Build: ${BUILD_TAG}
 🌍 Environment: ${environment}
-🔗 Build URL: ${buildUrl}
-                """
+🔗 Build URL: ${env.BUILD_URL}
+"""
+                echo message
+                
+                // Uncomment below if you have Slack integration
+                // slackSend(color: 'danger', message: message)
             }
         }
     }
