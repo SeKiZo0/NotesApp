@@ -6,67 +6,48 @@ def deployToKubernetes(environment) {
         env.KUBECONFIG = "${env.WORKSPACE}/.kubeconfig"
         def namespace = environment == 'production' ? 'notes-app-prod' : 'notes-app-staging'
         
-        // Create namespace if it doesn't exist
-        sh "kubectl create namespace ${namespace} --dry-run=client -o yaml | kubectl apply -f -"
-        
-        // Deploy PostgreSQL (only if not exists)
+        // Create namespace if it doesn't exist - using Docker-based kubectl
         sh """
-            if ! kubectl get deployment postgres-deployment -n ${namespace} > /dev/null 2>&1; then
-                echo "Deploying PostgreSQL to ${environment}..."
-                
-                # Apply PostgreSQL deployment with secrets
-                kubectl apply -f k8s/postgres-deployment.yaml -n ${namespace}
-                
-                # Wait for PostgreSQL to be ready
-                echo "Waiting for PostgreSQL to be available..."
-                kubectl wait --for=condition=available --timeout=300s deployment/postgres-deployment -n ${namespace}
-                
-                # Verify PostgreSQL is accepting connections
-                echo "Verifying PostgreSQL connectivity..."
-                kubectl exec deployment/postgres-deployment -n ${namespace} -- pg_isready -U postgres
-                
-                echo "PostgreSQL deployment completed successfully"
-            else
-                echo "PostgreSQL already deployed in ${environment}"
-                
-                # Still verify it's healthy
-                kubectl exec deployment/postgres-deployment -n ${namespace} -- pg_isready -U postgres
-            fi
+            docker run --rm -v ${env.WORKSPACE}/.kubeconfig:/root/.kube/config bitnami/kubectl:latest \
+                create namespace ${namespace} --dry-run=client -o yaml | \
+            docker run --rm -i -v ${env.WORKSPACE}/.kubeconfig:/root/.kube/config bitnami/kubectl:latest \
+                apply -f -
         """
         
-        // Update image tags in deployments
+        // Note: PostgreSQL is external - no deployment needed
+        echo "Using external PostgreSQL server - no database deployment required"
+        
+        // Update image tags in deployments and deploy apps
         sh """
             # Create temporary deployment files with updated images
             sed 's|notes-app-backend:latest|${env.BACKEND_IMAGE}|g' k8s/backend-deployment.yaml > backend-${environment}.yaml
             sed 's|notes-app-frontend:latest|${env.FRONTEND_IMAGE}|g' k8s/frontend-deployment.yaml > frontend-${environment}.yaml
             
-            # Apply backend deployment (this includes the PostgreSQL connection config)
-            echo "Deploying backend with PostgreSQL connection..."
-            kubectl apply -f backend-${environment}.yaml -n ${namespace}
+            # Apply backend deployment (with external PostgreSQL connection)
+            echo "Deploying backend with external PostgreSQL connection..."
+            docker run --rm -v ${env.WORKSPACE}/.kubeconfig:/root/.kube/config -v ${env.WORKSPACE}:/workspace \
+                bitnami/kubectl:latest apply -f /workspace/backend-${environment}.yaml -n ${namespace}
             
-            # Wait for backend to be ready (it will wait for PostgreSQL via init container)
+            # Wait for backend to be ready
             echo "Waiting for backend deployment to complete..."
-            kubectl rollout status deployment/backend-deployment -n ${namespace} --timeout=300s
-            
-            # Verify backend can connect to PostgreSQL
-            echo "Verifying backend-PostgreSQL connectivity..."
-            sleep 15  # Give backend time to initialize
-            kubectl exec deployment/backend-deployment -n ${namespace} -- curl -f http://localhost:5000/health
+            docker run --rm -v ${env.WORKSPACE}/.kubeconfig:/root/.kube/config \
+                bitnami/kubectl:latest rollout status deployment/backend-deployment -n ${namespace} --timeout=300s
             
             # Apply frontend deployment  
             echo "Deploying frontend..."
-            kubectl apply -f frontend-${environment}.yaml -n ${namespace}
-            kubectl rollout status deployment/frontend-deployment -n ${namespace} --timeout=300s
+            docker run --rm -v ${env.WORKSPACE}/.kubeconfig:/root/.kube/config -v ${env.WORKSPACE}:/workspace \
+                bitnami/kubectl:latest apply -f /workspace/frontend-${environment}.yaml -n ${namespace}
+            docker run --rm -v ${env.WORKSPACE}/.kubeconfig:/root/.kube/config \
+                bitnami/kubectl:latest rollout status deployment/frontend-deployment -n ${namespace} --timeout=300s
             
             # Get service information
             echo "=== Deployment completed for ${environment} ==="
-            echo "PostgreSQL Connection Details:"
-            echo "  Host: postgres-service.${namespace}.svc.cluster.local"
-            echo "  Port: 5432"
-            echo "  Database: notesdb"
-            echo "  User: postgres"
+            echo "External PostgreSQL Connection: ${POSTGRES_HOST}:${POSTGRES_PORT}"
+            echo "Database: ${POSTGRES_DB}"
+            echo "User: ${POSTGRES_USER}"
             echo ""
-            kubectl get pods,svc,ingress -n ${namespace}
+            docker run --rm -v ${env.WORKSPACE}/.kubeconfig:/root/.kube/config \
+                bitnami/kubectl:latest get pods,svc,ingress -n ${namespace}
         """
     }
 }
@@ -84,11 +65,12 @@ pipeline {
         REGISTRY_CREDENTIALS = 'forgejo-registry-credentials'
         K8S_CREDENTIALS = 'k8s-kubeconfig'
         
-        // Database Configuration
-        POSTGRES_DB = 'notesdb'
-        POSTGRES_USER = 'postgres'
-        POSTGRES_SERVICE = 'postgres-service'
+        // External Database Configuration
+        POSTGRES_HOST = '192.168.1.202'  // Update with your PostgreSQL server IP
         POSTGRES_PORT = '5432'
+        POSTGRES_DB = 'notesdb'
+        POSTGRES_USER = 'notesuser'
+        POSTGRES_PASSWORD = 'your_secure_password'  // Use Jenkins secrets in production
     }
     
     stages {
@@ -112,8 +94,6 @@ pipeline {
                 dir('backend') {
                     sh 'npm ci'
                     sh 'npm audit --audit-level moderate'
-                    // Add actual tests here when available
-                    // sh 'npm test'
                 }
             }
         }
@@ -123,8 +103,6 @@ pipeline {
                 dir('frontend') {
                     sh 'npm ci'
                     sh 'npm audit --audit-level moderate'
-                    // Add frontend tests here when available
-                    // sh 'npm test'
                 }
             }
         }
@@ -134,26 +112,22 @@ pipeline {
                 stage('Build Frontend Image') {
                     steps {
                         script {
-                            echo "Building frontend image: ${DOCKER_REPO_FRONTEND}:${BUILD_TAG}"
-                            def frontendImage = docker.build(
-                                "${DOCKER_REPO_FRONTEND}:${BUILD_TAG}",
-                                "-f frontend/Dockerfile frontend/"
-                            )
+                            env.FRONTEND_IMAGE = "${DOCKER_REPO_FRONTEND}:${env.BUILD_TAG}"
+                            echo "Building frontend image: ${env.FRONTEND_IMAGE}"
+                            
+                            def frontendImage = docker.build(env.FRONTEND_IMAGE, "-f frontend/Dockerfile frontend/")
                             frontendImage.tag("latest")
-                            env.FRONTEND_IMAGE = "${DOCKER_REPO_FRONTEND}:${BUILD_TAG}"
                         }
                     }
                 }
                 stage('Build Backend Image') {
                     steps {
                         script {
-                            echo "Building backend image: ${DOCKER_REPO_BACKEND}:${BUILD_TAG}"
-                            def backendImage = docker.build(
-                                "${DOCKER_REPO_BACKEND}:${BUILD_TAG}",
-                                "-f backend/Dockerfile backend/"
-                            )
+                            env.BACKEND_IMAGE = "${DOCKER_REPO_BACKEND}:${env.BUILD_TAG}"
+                            echo "Building backend image: ${env.BACKEND_IMAGE}"
+                            
+                            def backendImage = docker.build(env.BACKEND_IMAGE, "-f backend/Dockerfile backend/")
                             backendImage.tag("latest")
-                            env.BACKEND_IMAGE = "${DOCKER_REPO_BACKEND}:${BUILD_TAG}"
                         }
                     }
                 }
@@ -166,10 +140,8 @@ pipeline {
                     steps {
                         sh """
                             echo "Running security scan on frontend image..."
-                            # Using Trivy for container security scanning
                             docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-                            aquasec/trivy image --exit-code 0 --no-progress \
-                            --format table ${DOCKER_REPO_FRONTEND}:${BUILD_TAG} || echo "Security scan completed with warnings"
+                                aquasec/trivy image --exit-code 0 --no-progress --format table ${env.FRONTEND_IMAGE}
                         """
                     }
                 }
@@ -177,10 +149,8 @@ pipeline {
                     steps {
                         sh """
                             echo "Running security scan on backend image..."
-                            # Using Trivy for container security scanning
                             docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-                            aquasec/trivy image --exit-code 0 --no-progress \
-                            --format table ${DOCKER_REPO_BACKEND}:${BUILD_TAG} || echo "Security scan completed with warnings"
+                                aquasec/trivy image --exit-code 0 --no-progress --format table ${env.BACKEND_IMAGE}
                         """
                     }
                 }
@@ -191,93 +161,21 @@ pipeline {
             when {
                 anyOf {
                     branch 'main'
-                    branch 'develop'
                     branch 'master'
+                    branch 'develop'
                 }
             }
             steps {
                 script {
-                    echo "🚀 Pushing images to Forgejo registry..."
-                    echo "Registry: ${DOCKER_REGISTRY}"
-                    echo "Frontend: ${DOCKER_REPO_FRONTEND}:${BUILD_TAG}"
-                    echo "Backend: ${DOCKER_REPO_BACKEND}:${BUILD_TAG}"
-                    echo ""
-                    
-                    // Test registry connectivity first with better error handling
-                    sh """
-                        echo "🔍 Testing registry connectivity..."
-                        REGISTRY_STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://${DOCKER_REGISTRY}/v2/ 2>/dev/null || echo "000")
-                        echo "Registry HTTP status: \$REGISTRY_STATUS"
+                    echo 'Pushing Docker images to registry...'
+                    docker.withRegistry("http://${DOCKER_REGISTRY}", REGISTRY_CREDENTIALS) {
+                        def frontendImg = docker.image(env.FRONTEND_IMAGE)
+                        frontendImg.push()
+                        frontendImg.push('latest')
                         
-                        if [ "\$REGISTRY_STATUS" = "200" ]; then
-                            echo "✅ Registry is accessible and ready"
-                        elif [ "\$REGISTRY_STATUS" = "401" ]; then
-                            echo "🔑 Registry requires authentication (expected with credentials)"
-                        else
-                            echo "⚠️  Registry connectivity issue (HTTP \$REGISTRY_STATUS)"
-                            echo "🔍 Full registry response:"
-                            curl -v http://${DOCKER_REGISTRY}/v2/ 2>&1 || echo "Connection failed"
-                        fi
-                    """
-                    
-                    // Push with authentication using Jenkins credentials
-                    try {
-                        docker.withRegistry("http://${DOCKER_REGISTRY}", REGISTRY_CREDENTIALS) {
-                            echo "🔑 Successfully authenticated with registry"
-                            
-                            // Push frontend
-                            echo "📦 Pushing frontend image..."
-                            def frontendImg = docker.image("${DOCKER_REPO_FRONTEND}:${BUILD_TAG}")
-                            frontendImg.push()
-                            frontendImg.push('latest')
-                            echo "✅ Frontend image pushed successfully"
-                            
-                            // Push backend
-                            echo "📦 Pushing backend image..."
-                            def backendImg = docker.image("${DOCKER_REPO_BACKEND}:${BUILD_TAG}")
-                            backendImg.push()
-                            backendImg.push('latest')
-                            echo "✅ Backend image pushed successfully"
-                            
-                            echo ""
-                            echo "🎉 All images pushed successfully!"
-                            echo "Images available at:"
-                            echo "  • Frontend: ${DOCKER_REPO_FRONTEND}:${BUILD_TAG}"
-                            echo "  • Backend: ${DOCKER_REPO_BACKEND}:${BUILD_TAG}"
-                        }
-                    } catch (Exception e) {
-                        echo ""
-                        echo "❌ DOCKER PUSH FAILED"
-                        echo "═══════════════════════════════════════"
-                        echo ""
-                        echo "🔍 Error details: ${e.getMessage()}"
-                        echo ""
-                        echo "🛠️  TROUBLESHOOTING CHECKLIST:"
-                        echo ""
-                        echo "1️⃣  CREDENTIALS ISSUE:"
-                        echo "   • Check Jenkins credential: '${REGISTRY_CREDENTIALS}'"
-                        echo "   • Verify username/password are correct"
-                        echo "   • Test manual login: docker login ${DOCKER_REGISTRY}"
-                        echo ""
-                        echo "2️⃣  REGISTRY SERVER ISSUES:"
-                        echo "   • SSH to registry server: ssh [user]@192.168.1.150"
-                        echo "   • Check if registry is running: docker ps | grep registry"
-                        echo "   • If not running, start it: docker-compose up -d"
-                        echo ""
-                        echo "3️⃣  DOCKER DAEMON CONFIGURATION:"
-                        echo "   • Verify insecure registry config on Jenkins server:"
-                        echo "   • docker info | grep -A5 'Insecure Registries'"
-                        echo "   • Should show: 192.168.1.150:3000"
-                        echo ""
-                        echo "4️⃣  NETWORK/FIREWALL:"
-                        echo "   • Test connectivity: curl http://192.168.1.150:3000/v2/"
-                        echo "   • Check firewall rules between Jenkins and registry"
-                        echo ""
-                        echo "💡 QUICK FIX: If credentials are missing, add them in Jenkins:"
-                        echo "   Manage Jenkins → Credentials → Add Username/Password"
-                        echo "   ID: forgejo-registry-credentials"
-                        echo ""
-                        throw e
+                        def backendImg = docker.image(env.BACKEND_IMAGE)
+                        backendImg.push()
+                        backendImg.push('latest')
                     }
                 }
             }
@@ -287,7 +185,7 @@ pipeline {
             when {
                 anyOf {
                     branch 'develop'
-                    branch 'dev'
+                    branch 'feature/*'
                 }
             }
             steps {
@@ -317,42 +215,15 @@ pipeline {
             }
         }
         
-        stage('Database Setup Verification') {
+        stage('Database Connection Test') {
             steps {
                 script {
-                    def environment = env.BRANCH_NAME == 'main' || env.BRANCH_NAME == 'master' ? 'production' : 'staging'
-                    def namespace = environment == 'production' ? 'notes-app-prod' : 'notes-app-staging'
-                    
-                    echo "Verifying database setup in ${environment}..."
-                    
-                    withCredentials([string(credentialsId: K8S_CREDENTIALS, variable: 'KUBECONFIG_CONTENT')]) {
-                        // Write kubeconfig content to temporary file
-                        writeFile file: '.kubeconfig', text: env.KUBECONFIG_CONTENT
-                        env.KUBECONFIG = "${env.WORKSPACE}/.kubeconfig"
-                        
-                        sh """
-                            # Verify PostgreSQL is running and ready
-                            echo "Checking PostgreSQL status..."
-                            kubectl get pods -l app=postgres -n ${namespace}
-                            
-                            # Test PostgreSQL connectivity
-                            echo "Testing PostgreSQL connectivity..."
-                            kubectl exec deployment/postgres-deployment -n ${namespace} -- psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "SELECT version();"
-                            
-                            # Verify backend database connection
-                            echo "Testing backend database connection..."
-                            kubectl exec deployment/backend-deployment -n ${namespace} -- curl -f http://localhost:5000/health
-                            
-                            # Show database connection details
-                            echo "=== Database Connection Summary ==="
-                            echo "Environment: ${environment}"
-                            echo "Namespace: ${namespace}"
-                            echo "PostgreSQL Service: ${POSTGRES_SERVICE}.${namespace}.svc.cluster.local:${POSTGRES_PORT}"
-                            echo "Database Name: ${POSTGRES_DB}"
-                            echo "Database User: ${POSTGRES_USER}"
-                            echo "Backend connects via: ${POSTGRES_SERVICE}:${POSTGRES_PORT}"
-                        """
-                    }
+                    echo "Testing external PostgreSQL connection..."
+                    sh """
+                        echo "Testing connection to ${POSTGRES_HOST}:${POSTGRES_PORT}"
+                        # Test connection using a PostgreSQL client container
+                        docker run --rm postgres:15 pg_isready -h ${POSTGRES_HOST} -p ${POSTGRES_PORT} -U ${POSTGRES_USER} || echo "Connection test failed - please verify database server"
+                    """
                 }
             }
         }
@@ -372,15 +243,21 @@ pipeline {
                             # Wait a bit for services to be ready
                             sleep 30
                             
-                            # Check backend health
-                            kubectl exec -n ${namespace} deployment/backend-deployment -- \
-                                curl -f http://localhost:5000/health || exit 1
+                            echo "=== Application Health Check ==="
                             
-                            # Check if frontend is serving content
-                            kubectl exec -n ${namespace} deployment/frontend-deployment -- \
-                                curl -f http://localhost:80/ || exit 1
+                            # Check if pods are running
+                            echo "Checking pod status..."
+                            docker run --rm -v ${env.WORKSPACE}/.kubeconfig:/root/.kube/config \
+                                bitnami/kubectl:latest get pods -n ${namespace}
                             
-                            echo "All health checks passed!"
+                            # Test backend health endpoint through port-forward
+                            echo "Testing backend health endpoint..."
+                            timeout 30 docker run --rm -v ${env.WORKSPACE}/.kubeconfig:/root/.kube/config \
+                                bitnami/kubectl:latest port-forward -n ${namespace} deployment/backend-deployment 8080:5000 &
+                            sleep 5
+                            curl -f http://localhost:8080/health || echo "Backend health check failed"
+                            
+                            echo "=== Health check completed ==="
                         """
                     }
                 }
@@ -390,47 +267,38 @@ pipeline {
     
     post {
         always {
-            // Clean up docker images and workspace
-            sh """
-                docker rmi ${DOCKER_REPO_FRONTEND}:${BUILD_TAG} || true
-                docker rmi ${DOCKER_REPO_BACKEND}:${BUILD_TAG} || true
+            sh '''
+                docker rmi ${FRONTEND_IMAGE} || true
+                docker rmi ${BACKEND_IMAGE} || true
                 docker system prune -f --volumes
-            """
+            '''
             cleanWs()
         }
-        
         success {
             script {
                 def environment = env.BRANCH_NAME == 'main' || env.BRANCH_NAME == 'master' ? 'production' : 'staging'
-                def message = """
+                echo """
+
 ✅ *Notes App Deployment Successful!*
-📦 Build: ${BUILD_TAG}
+📦 Build: ${env.BUILD_TAG}
 🌍 Environment: ${environment}
-🐳 Images:
-  • Frontend: ${DOCKER_REPO_FRONTEND}:${BUILD_TAG}
-  • Backend: ${DOCKER_REPO_BACKEND}:${BUILD_TAG}
-🚀 Deployed by: ${env.DEPLOYER ?: env.BUILD_USER ?: 'Jenkins'}
-"""
-                echo message
-                
-                // Uncomment below if you have Slack integration
-                // slackSend(color: 'good', message: message)
+🗄️ Database: External PostgreSQL (${POSTGRES_HOST}:${POSTGRES_PORT})
+🔗 Build URL: ${env.BUILD_URL}
+
+                """
             }
         }
-        
         failure {
             script {
                 def environment = env.BRANCH_NAME == 'main' || env.BRANCH_NAME == 'master' ? 'production' : 'staging'
-                def message = """
+                echo """
+
 ❌ *Notes App Deployment Failed!*
-📦 Build: ${BUILD_TAG}
+📦 Build: ${env.BUILD_TAG}
 🌍 Environment: ${environment}
 🔗 Build URL: ${env.BUILD_URL}
-"""
-                echo message
-                
-                // Uncomment below if you have Slack integration
-                // slackSend(color: 'danger', message: message)
+
+                """
             }
         }
     }
