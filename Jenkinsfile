@@ -158,13 +158,6 @@ pipeline {
         }
         
         stage('Push Docker Images') {
-            when {
-                anyOf {
-                    branch 'main'
-                    branch 'master'
-                    branch 'develop'
-                }
-            }
             steps {
                 script {
                     echo 'Pushing Docker images to registry...'
@@ -181,28 +174,7 @@ pipeline {
             }
         }
         
-        stage('Deploy to Staging') {
-            when {
-                anyOf {
-                    branch 'develop'
-                    branch 'feature/*'
-                }
-            }
-            steps {
-                script {
-                    echo 'Deploying to Kubernetes staging environment...'
-                    deployToKubernetes('staging')
-                }
-            }
-        }
-        
         stage('Deploy to Production') {
-            when {
-                anyOf {
-                    branch 'main'
-                    branch 'master'
-                }
-            }
             steps {
                 script {
                     echo 'Deploying to Kubernetes production environment...'
@@ -227,8 +199,7 @@ pipeline {
         stage('Run Health Checks') {
             steps {
                 script {
-                    def namespace = env.BRANCH_NAME == 'main' || env.BRANCH_NAME == 'master' ? 'notes-app-prod' : 'notes-app-staging'
-                    echo "Running health checks in ${namespace} environment..."
+                    echo "Running health checks in notes-app-prod environment..."
                     
                     withCredentials([string(credentialsId: K8S_CREDENTIALS, variable: 'KUBECONFIG_CONTENT')]) {
                         // Write kubeconfig content to temporary file with specific permissions
@@ -239,27 +210,27 @@ pipeline {
                             sleep 30
                             
                             echo "=== Application Health Check ==="
-                            echo "Namespace: ${namespace}"
+                            echo "Namespace: notes-app-prod"
                             echo "Kubeconfig server check:"
                             grep -o 'server: .*' .kubeconfig || echo "Could not find server in kubeconfig"
                             
                             # Check if pods are running with better error handling
                             echo "Checking pod status..."
                             if docker run --rm -v \${PWD}/.kubeconfig:/root/.kube/config \
-                                bitnami/kubectl:latest get pods -n ${namespace} 2>/dev/null; then
-                                echo "✅ Pods found in ${namespace} namespace"
+                                bitnami/kubectl:latest get pods -n notes-app-prod 2>/dev/null; then
+                                echo "✅ Pods found in notes-app-prod namespace"
                                 
                                 # Test if any backend pods are running
                                 echo "Checking backend pods specifically..."
                                 docker run --rm -v \${PWD}/.kubeconfig:/root/.kube/config \
-                                    bitnami/kubectl:latest get pods -n ${namespace} -l app=notes-backend || echo "No backend pods found"
+                                    bitnami/kubectl:latest get pods -n notes-app-prod -l app=notes-backend || echo "No backend pods found"
                                     
                                 # Get service information
                                 echo "Checking services..."
                                 docker run --rm -v \${PWD}/.kubeconfig:/root/.kube/config \
-                                    bitnami/kubectl:latest get svc -n ${namespace} || echo "No services found"
+                                    bitnami/kubectl:latest get svc -n notes-app-prod || echo "No services found"
                             else
-                                echo "⚠️  Could not connect to Kubernetes cluster or namespace ${namespace} doesn't exist"
+                                echo "⚠️  Could not connect to Kubernetes cluster or namespace notes-app-prod doesn't exist"
                                 echo "This is expected on first run - applications will be deployed on main branch"
                             fi
                             
