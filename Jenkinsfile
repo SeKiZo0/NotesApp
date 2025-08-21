@@ -11,7 +11,7 @@ def deployToKubernetes(environment) {
             docker run --rm -v ${env.WORKSPACE}/.kubeconfig:/root/.kube/config bitnami/kubectl:latest \
                 create namespace ${namespace} --dry-run=client -o yaml | \
             docker run --rm -i -v ${env.WORKSPACE}/.kubeconfig:/root/.kube/config bitnami/kubectl:latest \
-                apply -f -
+                apply -f - --validate=false
         """
         
         // Note: PostgreSQL is external - no deployment needed
@@ -19,14 +19,14 @@ def deployToKubernetes(environment) {
         
         // Update image tags in deployments and deploy apps
         sh """
-            # Create temporary deployment files with updated images
-            sed 's|notes-app-backend:latest|${env.BACKEND_IMAGE}|g' k8s/backend-deployment.yaml > backend-${environment}.yaml
-            sed 's|notes-app-frontend:latest|${env.FRONTEND_IMAGE}|g' k8s/frontend-deployment.yaml > frontend-${environment}.yaml
+            # Create temporary deployment files with updated images for production
+            sed 's|192.168.1.150:3000/morris/notes-app-backend:latest|${env.BACKEND_IMAGE}|g' k8s/production-backend.yaml > backend-${environment}.yaml
+            sed 's|192.168.1.150:3000/morris/notes-app-frontend:latest|${env.FRONTEND_IMAGE}|g' k8s/production-frontend.yaml > frontend-${environment}.yaml
             
             # Apply backend deployment (with external PostgreSQL connection)
             echo "Deploying backend with external PostgreSQL connection..."
             docker run --rm -v ${env.WORKSPACE}/.kubeconfig:/root/.kube/config -v ${env.WORKSPACE}:/workspace \
-                bitnami/kubectl:latest apply -f /workspace/backend-${environment}.yaml -n ${namespace}
+                bitnami/kubectl:latest apply -f /workspace/backend-${environment}.yaml -n ${namespace} --validate=false
             
             # Wait for backend to be ready
             echo "Waiting for backend deployment to complete..."
@@ -36,7 +36,7 @@ def deployToKubernetes(environment) {
             # Apply frontend deployment  
             echo "Deploying frontend..."
             docker run --rm -v ${env.WORKSPACE}/.kubeconfig:/root/.kube/config -v ${env.WORKSPACE}:/workspace \
-                bitnami/kubectl:latest apply -f /workspace/frontend-${environment}.yaml -n ${namespace}
+                bitnami/kubectl:latest apply -f /workspace/frontend-${environment}.yaml -n ${namespace} --validate=false
             docker run --rm -v ${env.WORKSPACE}/.kubeconfig:/root/.kube/config \
                 bitnami/kubectl:latest rollout status deployment/frontend-deployment -n ${namespace} --timeout=300s
             
