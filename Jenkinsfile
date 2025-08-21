@@ -166,21 +166,47 @@ pipeline {
                         # Check if Docker daemon is configured for insecure registry
                         echo "🔍 Checking Docker daemon configuration..."
                         
-                        # Test registry connectivity first
-                        if ! curl -f http://${DOCKER_REGISTRY}/v2/ >/dev/null 2>&1; then
-                            echo "❌ Cannot connect to registry at ${DOCKER_REGISTRY}"
-                            echo "   Please verify the registry is running and accessible"
-                            exit 1
+                        # Test registry connectivity with detailed debugging
+                        echo "🌐 Testing registry connectivity..."
+                        REGISTRY_STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://${DOCKER_REGISTRY}/v2/ || echo "000")
+                        echo "Registry HTTP status: \$REGISTRY_STATUS"
+                        
+                        if [ "\$REGISTRY_STATUS" = "200" ]; then
+                            echo "✅ Registry is accessible and ready"
+                        elif [ "\$REGISTRY_STATUS" = "401" ]; then
+                            echo "⚠️  Registry requires authentication or is not configured for anonymous access"
+                            echo "🔧 Checking if we can access with credentials..."
+                        else
+                            echo "❌ Registry connectivity issue (HTTP \$REGISTRY_STATUS)"
+                            echo "🔍 Debugging registry connection..."
+                            echo "Full response:"
+                            curl -v http://${DOCKER_REGISTRY}/v2/ || true
+                            echo ""
+                            echo "💡 Possible solutions:"
+                            echo "1. Ensure registry container is running on 192.168.1.150:3000"
+                            echo "2. Check firewall settings"
+                            echo "3. Verify registry configuration"
+                            # Don't exit here, let's try to push anyway
                         fi
                         
-                        echo "✅ Registry connectivity confirmed"
-                        
                         # Check Docker daemon configuration
+                        echo "🐳 Checking Docker daemon configuration..."
                         if docker info 2>/dev/null | grep -q "Insecure Registries:" && \
                            docker info 2>/dev/null | grep -A5 "Insecure Registries:" | grep -q "${DOCKER_REGISTRY}"; then
                             echo "✅ Docker daemon properly configured for insecure registry"
                         else
                             echo "⚠️  Docker daemon may not be configured for insecure registry"
+                        fi
+                        
+                        # Try authentication with registry if credentials are available
+                        echo "🔑 Attempting registry authentication..."
+                        if docker login ${DOCKER_REGISTRY} 2>/dev/null; then
+                            echo "✅ Registry authentication successful"
+                            LOGIN_SUCCESS=true
+                        else
+                            echo "⚠️  Registry authentication failed or not required"
+                            echo "📝 Proceeding without authentication (registry may allow anonymous pushes)"
+                            LOGIN_SUCCESS=false
                         fi
                         
                         # Attempt to push images with proper error handling
@@ -200,39 +226,37 @@ pipeline {
                                 echo "🎉 All images pushed successfully!"
                             else
                                 echo "❌ Backend image push failed"
+                                echo "🔍 Checking push error details..."
+                                docker push ${DOCKER_REPO_BACKEND}:${BUILD_TAG} 2>&1 | tail -20 || true
                                 exit 1
                             fi
                         else
                             echo ""
-                            echo "❌ DOCKER PUSH FAILED - CONFIGURATION REQUIRED"
+                            echo "❌ DOCKER PUSH FAILED"
                             echo "════════════════════════════════════════════════"
                             echo ""
-                            echo "🔧 REQUIRED: Configure Docker daemon on Jenkins server"
+                            echo "� Error details:"
+                            docker push ${DOCKER_REPO_FRONTEND}:${BUILD_TAG} 2>&1 | tail -20 || true
                             echo ""
-                            echo "Step 1: SSH to Jenkins server"
-                            echo "   ssh [username]@192.168.1.153"
+                            echo "🛠️  TROUBLESHOOTING STEPS:"
                             echo ""
-                            echo "Step 2: Edit Docker daemon configuration"
-                            echo "   sudo nano /etc/docker/daemon.json"
+                            echo "1️⃣  REGISTRY SERVER ISSUES:"
+                            echo "   • SSH to registry server: ssh [user]@192.168.1.150"
+                            echo "   • Check if registry is running: docker ps | grep registry"
+                            echo "   • If not running, start it: docker-compose up -d"
                             echo ""
-                            echo "Step 3: Add this exact content:"
-                            echo "   {"
-                            echo "     \\"insecure-registries\\": [\\"${DOCKER_REGISTRY}\\"]"
-                            echo "   }"
+                            echo "2️⃣  AUTHENTICATION ISSUES:"
+                            echo "   • Registry may require authentication"
+                            echo "   • Configure registry for anonymous access, or"
+                            echo "   • Add registry credentials to Jenkins"
                             echo ""
-                            echo "Step 4: Restart Docker service"
-                            echo "   sudo systemctl restart docker"
+                            echo "3️⃣  NETWORK/FIREWALL ISSUES:"
+                            echo "   • Test connectivity: curl http://192.168.1.150:3000/v2/"
+                            echo "   • Check firewall rules between Jenkins and registry"
                             echo ""
-                            echo "Step 5: Restart Jenkins service"
-                            echo "   sudo systemctl restart jenkins"
-                            echo ""
-                            echo "Step 6: Re-run this pipeline"
-                            echo ""
-                            echo "🔐 ALTERNATIVE: Set up TLS/HTTPS for the registry"
-                            echo "   This is more secure but requires certificate setup"
-                            echo ""
-                            echo "💡 VERIFICATION: After configuration, run this on Jenkins server:"
-                            echo "   docker info | grep -A5 'Insecure Registries'"
+                            echo "4️⃣  REGISTRY CONFIGURATION:"
+                            echo "   • Registry should accept HTTP (not just HTTPS)"
+                            echo "   • Check docker-compose.yml configuration"
                             echo ""
                             exit 1
                         fi
