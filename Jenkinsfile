@@ -3,11 +3,11 @@ def deployToKubernetes(environment) {
     // Use kubeconfig file from repository
     def namespace = environment == 'production' ? 'notes-app-prod' : 'notes-app-staging'
     
-    // Create namespace if it doesn't exist - using Docker-based kubectl
+    // Create namespace if it doesn't exist - using Docker-based kubectl with explicit KUBECONFIG
     sh """
-        docker run --rm -v ${env.WORKSPACE}/k8s/kubeconfig.yaml:/root/.kube/config bitnami/kubectl:latest \
+        docker run --rm -e KUBECONFIG=/root/.kube/config -v ${env.WORKSPACE}/k8s/kubeconfig.yaml:/root/.kube/config bitnami/kubectl:latest \
             create namespace ${namespace} --dry-run=client -o yaml | \
-        docker run --rm -i -v ${env.WORKSPACE}/k8s/kubeconfig.yaml:/root/.kube/config bitnami/kubectl:latest \
+        docker run --rm -i -e KUBECONFIG=/root/.kube/config -v ${env.WORKSPACE}/k8s/kubeconfig.yaml:/root/.kube/config bitnami/kubectl:latest \
             apply -f - --validate=false
     """
         
@@ -22,19 +22,19 @@ def deployToKubernetes(environment) {
             
             # Apply backend deployment (with external PostgreSQL connection)
             echo "Deploying backend with external PostgreSQL connection..."
-            docker run --rm -v ${env.WORKSPACE}/k8s/kubeconfig.yaml:/root/.kube/config -v ${env.WORKSPACE}:/workspace \
+            docker run --rm -e KUBECONFIG=/root/.kube/config -v ${env.WORKSPACE}/k8s/kubeconfig.yaml:/root/.kube/config -v ${env.WORKSPACE}:/workspace \
                 bitnami/kubectl:latest apply -f /workspace/backend-${environment}.yaml -n ${namespace} --validate=false
             
             # Wait for backend to be ready
             echo "Waiting for backend deployment to complete..."
-            docker run --rm -v ${env.WORKSPACE}/k8s/kubeconfig.yaml:/root/.kube/config \
+            docker run --rm -e KUBECONFIG=/root/.kube/config -v ${env.WORKSPACE}/k8s/kubeconfig.yaml:/root/.kube/config \
                 bitnami/kubectl:latest rollout status deployment/backend-deployment -n ${namespace} --timeout=300s
             
             # Apply frontend deployment  
             echo "Deploying frontend..."
-            docker run --rm -v ${env.WORKSPACE}/k8s/kubeconfig.yaml:/root/.kube/config -v ${env.WORKSPACE}:/workspace \
+            docker run --rm -e KUBECONFIG=/root/.kube/config -v ${env.WORKSPACE}/k8s/kubeconfig.yaml:/root/.kube/config -v ${env.WORKSPACE}:/workspace \
                 bitnami/kubectl:latest apply -f /workspace/frontend-${environment}.yaml -n ${namespace} --validate=false
-            docker run --rm -v ${env.WORKSPACE}/k8s/kubeconfig.yaml:/root/.kube/config \
+            docker run --rm -e KUBECONFIG=/root/.kube/config -v ${env.WORKSPACE}/k8s/kubeconfig.yaml:/root/.kube/config \
                 bitnami/kubectl:latest rollout status deployment/frontend-deployment -n ${namespace} --timeout=300s
             
             # Get service information
@@ -43,7 +43,7 @@ def deployToKubernetes(environment) {
             echo "Database: ${POSTGRES_DB}"
             echo "User: ${POSTGRES_USER}"
             echo ""
-            docker run --rm -v ${env.WORKSPACE}/k8s/kubeconfig.yaml:/root/.kube/config \
+            docker run --rm -e KUBECONFIG=/root/.kube/config -v ${env.WORKSPACE}/k8s/kubeconfig.yaml:/root/.kube/config \
                 bitnami/kubectl:latest get pods,svc,ingress -n ${namespace}
         """
 }
@@ -230,33 +230,30 @@ pipeline {
                 script {
                     echo "Running health checks in notes-app-prod environment..."
                     
-                    withCredentials([string(credentialsId: K8S_CREDENTIALS, variable: 'KUBECONFIG_CONTENT')]) {
-                        // Write kubeconfig content to temporary file with specific permissions
-                        writeFile file: '.kubeconfig', text: env.KUBECONFIG_CONTENT
+                    // Use kubeconfig file from repository instead of Jenkins secrets
+                    sh """
+                        # Wait a bit for services to be ready
+                        sleep 30
                         
-                        sh """
-                            # Wait a bit for services to be ready
-                            sleep 30
-                            
-                            echo "=== Application Health Check ==="
-                            echo "Namespace: notes-app-prod"
-                            echo "Kubeconfig server check:"
-                            grep -o 'server: .*' .kubeconfig || echo "Could not find server in kubeconfig"
+                        echo "=== Application Health Check ==="
+                        echo "Namespace: notes-app-prod"
+                        echo "Kubeconfig server check:"
+                        grep -o 'server: .*' k8s/kubeconfig.yaml || echo "Could not find server in kubeconfig"
                             
                             # Check if pods are running with better error handling
                             echo "Checking pod status..."
-                            if docker run --rm -v \${PWD}/.kubeconfig:/root/.kube/config \
+                            if docker run --rm -e KUBECONFIG=/root/.kube/config -v ${env.WORKSPACE}/k8s/kubeconfig.yaml:/root/.kube/config \
                                 bitnami/kubectl:latest get pods -n notes-app-prod 2>/dev/null; then
                                 echo "✅ Pods found in notes-app-prod namespace"
                                 
                                 # Test if any backend pods are running
                                 echo "Checking backend pods specifically..."
-                                docker run --rm -v \${PWD}/.kubeconfig:/root/.kube/config \
+                                docker run --rm -e KUBECONFIG=/root/.kube/config -v ${env.WORKSPACE}/k8s/kubeconfig.yaml:/root/.kube/config \
                                     bitnami/kubectl:latest get pods -n notes-app-prod -l app=notes-backend || echo "No backend pods found"
                                     
                                 # Get service information
                                 echo "Checking services..."
-                                docker run --rm -v \${PWD}/.kubeconfig:/root/.kube/config \
+                                docker run --rm -e KUBECONFIG=/root/.kube/config -v ${env.WORKSPACE}/k8s/kubeconfig.yaml:/root/.kube/config \
                                     bitnami/kubectl:latest get svc -n notes-app-prod || echo "No services found"
                             else
                                 echo "⚠️  Could not connect to Kubernetes cluster or namespace notes-app-prod doesn't exist"
