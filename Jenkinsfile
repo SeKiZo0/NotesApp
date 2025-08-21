@@ -3,17 +3,17 @@ def deployToKubernetes(environment) {
     // Use kubeconfig file from repository
     def namespace = environment == 'production' ? 'notes-app-prod' : 'notes-app-staging'
     
-    // Create namespace if it doesn't exist - using environment variable approach
+    // Create namespace if it doesn't exist - using environment variable approach with alpine base
     sh """
         # Read kubeconfig content and pass as environment variable to avoid file mounting issues
         KUBECONFIG_CONTENT=\$(cat ${env.WORKSPACE}/k8s/kubeconfig.yaml | base64 -w 0)
         
-        # Create namespace using environment variable approach
-        docker run --rm -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" bitnami/kubectl:latest sh -c '
+        # Create namespace using environment variable approach with alpine+kubectl
+        docker run --rm -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" alpine/k8s:1.28.0 sh -c '
             echo \$KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
             export KUBECONFIG=/tmp/kubeconfig
             kubectl create namespace ${namespace} --dry-run=client -o yaml
-        ' | docker run --rm -i -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" bitnami/kubectl:latest sh -c '
+        ' | docker run --rm -i -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" alpine/k8s:1.28.0 sh -c '
             echo \$KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
             export KUBECONFIG=/tmp/kubeconfig
             kubectl apply -f - --validate=false
@@ -34,7 +34,7 @@ def deployToKubernetes(environment) {
             
             # Apply backend deployment (with external PostgreSQL connection)
             echo "Deploying backend with external PostgreSQL connection..."
-            docker run --rm -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" -v ${env.WORKSPACE}:/workspace bitnami/kubectl:latest sh -c '
+            docker run --rm -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" -v ${env.WORKSPACE}:/workspace alpine/k8s:1.28.0 sh -c '
                 echo \$KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
                 export KUBECONFIG=/tmp/kubeconfig
                 kubectl apply -f /workspace/backend-${environment}.yaml -n ${namespace} --validate=false
@@ -42,7 +42,7 @@ def deployToKubernetes(environment) {
             
             # Wait for backend to be ready
             echo "Waiting for backend deployment to complete..."
-            docker run --rm -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" bitnami/kubectl:latest sh -c '
+            docker run --rm -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" alpine/k8s:1.28.0 sh -c '
                 echo \$KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
                 export KUBECONFIG=/tmp/kubeconfig
                 kubectl rollout status deployment/backend-deployment -n ${namespace} --timeout=300s
@@ -50,12 +50,12 @@ def deployToKubernetes(environment) {
             
             # Apply frontend deployment  
             echo "Deploying frontend..."
-            docker run --rm -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" -v ${env.WORKSPACE}:/workspace bitnami/kubectl:latest sh -c '
+            docker run --rm -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" -v ${env.WORKSPACE}:/workspace alpine/k8s:1.28.0 sh -c '
                 echo \$KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
                 export KUBECONFIG=/tmp/kubeconfig
                 kubectl apply -f /workspace/frontend-${environment}.yaml -n ${namespace} --validate=false
             '
-            docker run --rm -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" bitnami/kubectl:latest sh -c '
+            docker run --rm -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" alpine/k8s:1.28.0 sh -c '
                 echo \$KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
                 export KUBECONFIG=/tmp/kubeconfig
                 kubectl rollout status deployment/frontend-deployment -n ${namespace} --timeout=300s
@@ -67,7 +67,7 @@ def deployToKubernetes(environment) {
             echo "Database: ${POSTGRES_DB}"
             echo "User: ${POSTGRES_USER}"
             echo ""
-            docker run --rm -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" bitnami/kubectl:latest sh -c '
+            docker run --rm -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" alpine/k8s:1.28.0 sh -c '
                 echo \$KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
                 export KUBECONFIG=/tmp/kubeconfig
                 kubectl get pods,svc,ingress -n ${namespace}
@@ -275,7 +275,7 @@ pipeline {
                             
                             # Check if pods are running with better error handling
                             echo "Checking pod status..."
-                            if docker run --rm -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" bitnami/kubectl:latest sh -c '
+                            if docker run --rm -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" alpine/k8s:1.28.0 sh -c '
                                 echo \$KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
                                 export KUBECONFIG=/tmp/kubeconfig
                                 kubectl get pods -n notes-app-prod 2>/dev/null
@@ -284,7 +284,7 @@ pipeline {
                                 
                                 # Test if any backend pods are running
                                 echo "Checking backend pods specifically..."
-                                docker run --rm -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" bitnami/kubectl:latest sh -c '
+                                docker run --rm -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" alpine/k8s:1.28.0 sh -c '
                                     echo \$KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
                                     export KUBECONFIG=/tmp/kubeconfig
                                     kubectl get pods -n notes-app-prod -l app=notes-backend
@@ -292,7 +292,7 @@ pipeline {
                                     
                                 # Get service information
                                 echo "Checking services..."
-                                docker run --rm -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" bitnami/kubectl:latest sh -c '
+                                docker run --rm -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" alpine/k8s:1.28.0 sh -c '
                                     echo \$KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
                                     export KUBECONFIG=/tmp/kubeconfig
                                     kubectl get svc -n notes-app-prod
