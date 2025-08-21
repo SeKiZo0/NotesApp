@@ -285,6 +285,26 @@ Required Jenkins credentials:
 - `forgejo-registry-credentials` - Forgejo registry access
 - `k8s-kubeconfig` - Kubernetes cluster access
 
+### Common Pipeline Issues
+
+#### Docker Registry Push Failures
+
+If you encounter this error:
+```
+❌ Push failed - Docker daemon needs configuration
+```
+
+This is because the Docker daemon on Jenkins isn't configured for the insecure registry. 
+
+**Quick Fix:**
+1. SSH to Jenkins server: `ssh [username]@192.168.1.153`
+2. Run the provided fix script: `sudo bash scripts/fix-docker-registry.sh`
+
+**Manual Fix:**
+See [DOCKER_REGISTRY_SETUP.md](DOCKER_REGISTRY_SETUP.md) for detailed instructions.
+
+The issue occurs because Docker requires explicit configuration to push to HTTP registries (non-HTTPS).
+
 ## 📊 Monitoring and Observability
 
 ### Health Checks

@@ -159,46 +159,81 @@ pipeline {
                     sh """
                         echo "Pushing images to registry..."
                         echo "Registry: ${DOCKER_REGISTRY}"
+                        echo "Frontend: ${DOCKER_REPO_FRONTEND}:${BUILD_TAG}"
+                        echo "Backend: ${DOCKER_REPO_BACKEND}:${BUILD_TAG}"
+                        echo ""
                         
-                        # Create temporary Docker config to handle insecure registry
-                        mkdir -p /tmp/docker-config
+                        # Check if Docker daemon is configured for insecure registry
+                        echo "🔍 Checking Docker daemon configuration..."
                         
-                        # Try to configure client-side settings
-                        cat > /tmp/docker-config/config.json << 'EOF'
-{
-  "auths": {},
-  "experimental": "disabled"
-}
-EOF
+                        # Test registry connectivity first
+                        if ! curl -f http://${DOCKER_REGISTRY}/v2/ >/dev/null 2>&1; then
+                            echo "❌ Cannot connect to registry at ${DOCKER_REGISTRY}"
+                            echo "   Please verify the registry is running and accessible"
+                            exit 1
+                        fi
                         
-                        # Set environment variables for this session
-                        export DOCKER_CONFIG=/tmp/docker-config
-                        export DOCKER_TLS_VERIFY=""
-                        export DOCKER_CERT_PATH=""
+                        echo "✅ Registry connectivity confirmed"
                         
-                        # Try pushing with different approaches
-                        echo "Attempting to push images..."
-                        
-                        # Method 1: Direct push
-                        if docker push ${DOCKER_REPO_FRONTEND}:${BUILD_TAG} 2>/dev/null; then
-                            echo "✅ Frontend image pushed successfully"
-                            docker push ${DOCKER_REPO_FRONTEND}:latest
-                            docker push ${DOCKER_REPO_BACKEND}:${BUILD_TAG}
-                            docker push ${DOCKER_REPO_BACKEND}:latest
-                            echo "✅ All images pushed successfully"
+                        # Check Docker daemon configuration
+                        if docker info 2>/dev/null | grep -q "Insecure Registries:" && \
+                           docker info 2>/dev/null | grep -A5 "Insecure Registries:" | grep -q "${DOCKER_REGISTRY}"; then
+                            echo "✅ Docker daemon properly configured for insecure registry"
                         else
-                            echo "❌ Push failed - Docker daemon needs configuration"
+                            echo "⚠️  Docker daemon may not be configured for insecure registry"
+                        fi
+                        
+                        # Attempt to push images with proper error handling
+                        echo ""
+                        echo "📦 Pushing frontend image..."
+                        if docker push ${DOCKER_REPO_FRONTEND}:${BUILD_TAG}; then
+                            echo "✅ Frontend image pushed successfully"
+                            echo "📦 Pushing frontend latest tag..."
+                            docker push ${DOCKER_REPO_FRONTEND}:latest
+                            
+                            echo "📦 Pushing backend image..."
+                            if docker push ${DOCKER_REPO_BACKEND}:${BUILD_TAG}; then
+                                echo "✅ Backend image pushed successfully"
+                                echo "📦 Pushing backend latest tag..."
+                                docker push ${DOCKER_REPO_BACKEND}:latest
+                                echo ""
+                                echo "🎉 All images pushed successfully!"
+                            else
+                                echo "❌ Backend image push failed"
+                                exit 1
+                            fi
+                        else
                             echo ""
-                            echo "🔧 SOLUTION: Configure Docker daemon on Jenkins server"
-                            echo "1. SSH to Jenkins server: ssh [user]@192.168.1.153"
-                            echo "2. Edit daemon config: sudo nano /etc/docker/daemon.json"
-                            echo "3. Add this content:"
-                            echo '   {"insecure-registries": ["192.168.1.150:3000"]}'
-                            echo "4. Restart Docker: sudo systemctl restart docker"
-                            echo "5. Restart Jenkins: sudo systemctl restart jenkins"
+                            echo "❌ DOCKER PUSH FAILED - CONFIGURATION REQUIRED"
+                            echo "════════════════════════════════════════════════"
                             echo ""
-                            echo "📝 Alternative: If you cannot access Jenkins server,"
-                            echo "   set up Docker registry with HTTPS/TLS instead"
+                            echo "🔧 REQUIRED: Configure Docker daemon on Jenkins server"
+                            echo ""
+                            echo "Step 1: SSH to Jenkins server"
+                            echo "   ssh [username]@192.168.1.153"
+                            echo ""
+                            echo "Step 2: Edit Docker daemon configuration"
+                            echo "   sudo nano /etc/docker/daemon.json"
+                            echo ""
+                            echo "Step 3: Add this exact content:"
+                            echo "   {"
+                            echo "     \\"insecure-registries\\": [\\"${DOCKER_REGISTRY}\\"]"
+                            echo "   }"
+                            echo ""
+                            echo "Step 4: Restart Docker service"
+                            echo "   sudo systemctl restart docker"
+                            echo ""
+                            echo "Step 5: Restart Jenkins service"
+                            echo "   sudo systemctl restart jenkins"
+                            echo ""
+                            echo "Step 6: Re-run this pipeline"
+                            echo ""
+                            echo "🔐 ALTERNATIVE: Set up TLS/HTTPS for the registry"
+                            echo "   This is more secure but requires certificate setup"
+                            echo ""
+                            echo "💡 VERIFICATION: After configuration, run this on Jenkins server:"
+                            echo "   docker info | grep -A5 'Insecure Registries'"
+                            echo ""
                             exit 1
                         fi
                     """
