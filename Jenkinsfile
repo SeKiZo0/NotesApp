@@ -3,7 +3,7 @@ def deployToKubernetes(environment) {
     // Use kubeconfig file from repository
     def namespace = environment == 'production' ? 'notes-app-prod' : 'notes-app-staging'
     
-    // Create namespace if it doesn't exist - using Docker-based kubectl with explicit KUBECONFIG
+    // Create namespace if it doesn't exist - using environment variable approach
     sh """
         # Read kubeconfig content and pass as environment variable to avoid file mounting issues
         KUBECONFIG_CONTENT=\$(cat ${env.WORKSPACE}/k8s/kubeconfig.yaml | base64 -w 0)
@@ -260,15 +260,13 @@ pipeline {
                 script {
                     echo "Running health checks in notes-app-prod environment..."
                     
-                    // Use kubeconfig file from repository instead of Jenkins secrets
+                    // Use environment variable approach for kubeconfig
                     sh """
                         # Wait a bit for services to be ready
                         sleep 30
                         
-                        # Create Docker volume for health check kubeconfig
-                        docker volume create kubeconfig-vol-health-${env.BUILD_NUMBER}
-                        docker run --rm -v kubeconfig-vol-health-${env.BUILD_NUMBER}:/kubeconfig -v ${env.WORKSPACE}/k8s:/source alpine:latest \
-                            cp /source/kubeconfig.yaml /kubeconfig/config
+                        # Read kubeconfig content as base64 for environment variable approach
+                        KUBECONFIG_CONTENT=\$(cat ${env.WORKSPACE}/k8s/kubeconfig.yaml | base64 -w 0)
                         
                         echo "=== Application Health Check ==="
                         echo "Namespace: notes-app-prod"
@@ -277,19 +275,28 @@ pipeline {
                             
                             # Check if pods are running with better error handling
                             echo "Checking pod status..."
-                            if docker run --rm -e KUBECONFIG=/root/.kube/config -v kubeconfig-vol-health-${env.BUILD_NUMBER}:/root/.kube \
-                                bitnami/kubectl:latest get pods -n notes-app-prod 2>/dev/null; then
+                            if docker run --rm -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" bitnami/kubectl:latest sh -c '
+                                echo \$KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
+                                export KUBECONFIG=/tmp/kubeconfig
+                                kubectl get pods -n notes-app-prod 2>/dev/null
+                            '; then
                                 echo "✅ Pods found in notes-app-prod namespace"
                                 
                                 # Test if any backend pods are running
                                 echo "Checking backend pods specifically..."
-                                docker run --rm -e KUBECONFIG=/root/.kube/config -v kubeconfig-vol-health-${env.BUILD_NUMBER}:/root/.kube \
-                                    bitnami/kubectl:latest get pods -n notes-app-prod -l app=notes-backend || echo "No backend pods found"
+                                docker run --rm -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" bitnami/kubectl:latest sh -c '
+                                    echo \$KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
+                                    export KUBECONFIG=/tmp/kubeconfig
+                                    kubectl get pods -n notes-app-prod -l app=notes-backend
+                                ' || echo "No backend pods found"
                                     
                                 # Get service information
                                 echo "Checking services..."
-                                docker run --rm -e KUBECONFIG=/root/.kube/config -v kubeconfig-vol-health-${env.BUILD_NUMBER}:/root/.kube \
-                                    bitnami/kubectl:latest get svc -n notes-app-prod || echo "No services found"
+                                docker run --rm -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" bitnami/kubectl:latest sh -c '
+                                    echo \$KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
+                                    export KUBECONFIG=/tmp/kubeconfig
+                                    kubectl get svc -n notes-app-prod
+                                ' || echo "No services found"
                             else
                                 echo "⚠️  Could not connect to Kubernetes cluster or namespace notes-app-prod doesn't exist"
                                 echo "This is expected on first run - applications will be deployed on main branch"
@@ -301,9 +308,6 @@ pipeline {
                             echo "✅ User: postgres ✅"
                             
                             echo "=== Health check completed ==="
-                            
-                            # Clean up Docker volume
-                            docker volume rm kubeconfig-vol-health-${env.BUILD_NUMBER}
                         """
                     }
                 }
