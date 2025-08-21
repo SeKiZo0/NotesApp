@@ -2,7 +2,7 @@
 FROM nginx:alpine
 
 # Copy static files to nginx html directory
-COPY frontend/ /usr/share/nginx/html/
+COPY . /usr/share/nginx/html/
 
 # Create nginx configuration for SPA
 RUN echo 'server { \
