@@ -42,11 +42,24 @@ def deployToKubernetes(environment) {
             
             # Wait for backend to be ready
             echo "Waiting for backend deployment to complete..."
-            docker run --rm -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" alpine/k8s:1.28.0 sh -c '
+            if ! docker run --rm -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" alpine/k8s:1.28.0 sh -c '
                 echo \$KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
                 export KUBECONFIG=/tmp/kubeconfig
                 kubectl rollout status deployment/backend-deployment -n ${namespace} --timeout=300s
-            '
+            '; then
+                echo "Backend deployment failed, checking pod status..."
+                docker run --rm -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" alpine/k8s:1.28.0 sh -c '
+                    echo \$KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
+                    export KUBECONFIG=/tmp/kubeconfig
+                    echo "=== Pod Status ==="
+                    kubectl get pods -n ${namespace} -l app=backend
+                    echo "=== Pod Events ==="
+                    kubectl get events -n ${namespace} --sort-by=.metadata.creationTimestamp
+                    echo "=== Pod Logs ==="
+                    kubectl logs -n ${namespace} -l app=backend --tail=50 || echo "No logs available"
+                '
+                exit 1
+            fi
             
             # Apply frontend deployment  
             echo "Deploying frontend..."
