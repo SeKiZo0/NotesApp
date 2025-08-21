@@ -65,7 +65,7 @@ def deployToKubernetes(environment) {
                     export KUBECONFIG=/tmp/kubeconfig
                     echo "=== Backend Pod Status ==="; kubectl get pods -n ${namespace} -l app=backend
                     echo "=== Events ==="; kubectl get events -n ${namespace} --sort-by=.metadata.creationTimestamp | tail -n 50
-                    echo "=== Logs (first available pod) ==="; POD=\$(kubectl get pods -n ${namespace} -l app=backend -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true); [ -n "$POD" ] && kubectl logs -n ${namespace} $POD --tail=100 || echo "No logs"
+                    echo "=== Logs (first available pod) ==="; POD=\$(kubectl get pods -n ${namespace} -l app=backend -o jsonpath='\''{.items[0].metadata.name}'\'' 2>/dev/null || true); [ -n "\$POD" ] && kubectl logs -n ${namespace} \$POD --tail=100 || echo "No logs"
                 '
                 exit 1
             fi
