@@ -205,10 +205,6 @@ pipeline {
             }
             steps {
                 script {
-                    // Manual approval for production deployment
-                    input message: 'Deploy to production?', ok: 'Deploy',
-                          submitterParameter: 'DEPLOYER'
-                    
                     echo 'Deploying to Kubernetes production environment...'
                     deployToKubernetes('production')
                 }
