@@ -5,22 +5,19 @@ def deployToKubernetes(environment) {
     
     // Create namespace if it doesn't exist - using Docker-based kubectl with explicit KUBECONFIG
     sh """
-        # Alternative approach: Use Docker volume and copy kubeconfig into container
-        # Create a temporary Docker volume
-        docker volume create kubeconfig-vol-${env.BUILD_NUMBER}
+        # Read kubeconfig content and pass as environment variable to avoid file mounting issues
+        KUBECONFIG_CONTENT=\$(cat ${env.WORKSPACE}/k8s/kubeconfig.yaml | base64 -w 0)
         
-        # Copy kubeconfig content into the volume using a helper container
-        docker run --rm -v kubeconfig-vol-${env.BUILD_NUMBER}:/kubeconfig -v ${env.WORKSPACE}/k8s:/source alpine:latest \
-            cp /source/kubeconfig.yaml /kubeconfig/config
-        
-        # Use the volume-mounted kubeconfig
-        docker run --rm -e KUBECONFIG=/root/.kube/config -v kubeconfig-vol-${env.BUILD_NUMBER}:/root/.kube bitnami/kubectl:latest \
-            create namespace ${namespace} --dry-run=client -o yaml | \
-        docker run --rm -i -e KUBECONFIG=/root/.kube/config -v kubeconfig-vol-${env.BUILD_NUMBER}:/root/.kube bitnami/kubectl:latest \
-            apply -f - --validate=false
-        
-        # Clean up the volume
-        docker volume rm kubeconfig-vol-${env.BUILD_NUMBER}
+        # Create namespace using environment variable approach
+        docker run --rm -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" bitnami/kubectl:latest sh -c '
+            echo \$KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
+            export KUBECONFIG=/tmp/kubeconfig
+            kubectl create namespace ${namespace} --dry-run=client -o yaml
+        ' | docker run --rm -i -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" bitnami/kubectl:latest sh -c '
+            echo \$KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
+            export KUBECONFIG=/tmp/kubeconfig
+            kubectl apply -f - --validate=false
+        '
     """
         
         // Note: PostgreSQL is external - no deployment needed
@@ -28,12 +25,8 @@ def deployToKubernetes(environment) {
         
         // Update image tags in deployments and deploy apps
         sh """
-            # Create Docker volume for kubeconfig
-            docker volume create kubeconfig-vol-${environment}-${env.BUILD_NUMBER}
-            
-            # Copy kubeconfig into the volume
-            docker run --rm -v kubeconfig-vol-${environment}-${env.BUILD_NUMBER}:/kubeconfig -v ${env.WORKSPACE}/k8s:/source alpine:latest \
-                cp /source/kubeconfig.yaml /kubeconfig/config
+            # Read kubeconfig content as base64 to pass via environment variable
+            KUBECONFIG_CONTENT=\$(cat ${env.WORKSPACE}/k8s/kubeconfig.yaml | base64 -w 0)
             
             # Create temporary deployment files with updated images for production
             sed 's|192.168.1.150:3000/morris/notes-app-backend:latest|${env.BACKEND_IMAGE}|g' k8s/production-backend.yaml > backend-${environment}.yaml
@@ -41,20 +34,32 @@ def deployToKubernetes(environment) {
             
             # Apply backend deployment (with external PostgreSQL connection)
             echo "Deploying backend with external PostgreSQL connection..."
-            docker run --rm -e KUBECONFIG=/root/.kube/config -v kubeconfig-vol-${environment}-${env.BUILD_NUMBER}:/root/.kube -v ${env.WORKSPACE}:/workspace \
-                bitnami/kubectl:latest apply -f /workspace/backend-${environment}.yaml -n ${namespace} --validate=false
+            docker run --rm -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" -v ${env.WORKSPACE}:/workspace bitnami/kubectl:latest sh -c '
+                echo \$KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
+                export KUBECONFIG=/tmp/kubeconfig
+                kubectl apply -f /workspace/backend-${environment}.yaml -n ${namespace} --validate=false
+            '
             
             # Wait for backend to be ready
             echo "Waiting for backend deployment to complete..."
-            docker run --rm -e KUBECONFIG=/root/.kube/config -v kubeconfig-vol-${environment}-${env.BUILD_NUMBER}:/root/.kube \
-                bitnami/kubectl:latest rollout status deployment/backend-deployment -n ${namespace} --timeout=300s
+            docker run --rm -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" bitnami/kubectl:latest sh -c '
+                echo \$KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
+                export KUBECONFIG=/tmp/kubeconfig
+                kubectl rollout status deployment/backend-deployment -n ${namespace} --timeout=300s
+            '
             
             # Apply frontend deployment  
             echo "Deploying frontend..."
-            docker run --rm -e KUBECONFIG=/root/.kube/config -v kubeconfig-vol-${environment}-${env.BUILD_NUMBER}:/root/.kube -v ${env.WORKSPACE}:/workspace \
-                bitnami/kubectl:latest apply -f /workspace/frontend-${environment}.yaml -n ${namespace} --validate=false
-            docker run --rm -e KUBECONFIG=/root/.kube/config -v kubeconfig-vol-${environment}-${env.BUILD_NUMBER}:/root/.kube \
-                bitnami/kubectl:latest rollout status deployment/frontend-deployment -n ${namespace} --timeout=300s
+            docker run --rm -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" -v ${env.WORKSPACE}:/workspace bitnami/kubectl:latest sh -c '
+                echo \$KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
+                export KUBECONFIG=/tmp/kubeconfig
+                kubectl apply -f /workspace/frontend-${environment}.yaml -n ${namespace} --validate=false
+            '
+            docker run --rm -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" bitnami/kubectl:latest sh -c '
+                echo \$KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
+                export KUBECONFIG=/tmp/kubeconfig
+                kubectl rollout status deployment/frontend-deployment -n ${namespace} --timeout=300s
+            '
             
             # Get service information
             echo "=== Deployment completed for ${environment} ==="
@@ -62,11 +67,13 @@ def deployToKubernetes(environment) {
             echo "Database: ${POSTGRES_DB}"
             echo "User: ${POSTGRES_USER}"
             echo ""
-            docker run --rm -e KUBECONFIG=/root/.kube/config -v kubeconfig-vol-${environment}-${env.BUILD_NUMBER}:/root/.kube \
-                bitnami/kubectl:latest get pods,svc,ingress -n ${namespace}
+            docker run --rm -e KUBECONFIG_CONTENT="\$KUBECONFIG_CONTENT" bitnami/kubectl:latest sh -c '
+                echo \$KUBECONFIG_CONTENT | base64 -d > /tmp/kubeconfig
+                export KUBECONFIG=/tmp/kubeconfig
+                kubectl get pods,svc,ingress -n ${namespace}
+            '
             
-            # Clean up
-            docker volume rm kubeconfig-vol-${environment}-${env.BUILD_NUMBER}
+            # Clean up temporary files
             rm -f backend-${environment}.yaml frontend-${environment}.yaml
         """
 }
