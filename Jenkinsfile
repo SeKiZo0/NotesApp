@@ -273,9 +273,6 @@ pipeline {
         }
     }
     
-    }
-    }
-    
     post {
         always {
             sh '''
